@@ -57,6 +57,38 @@ void Display::Start() {
   lv_obj_set_style_text_font(screen, &font_puhui_14_1, 0);
   lv_obj_set_style_text_color(screen, lv_color_black(), 0);
 
+  // 自适应布局计算
+  // 基于屏幕尺寸计算合适的布局参数
+  int status_bar_height = 1;
+  int content_left_width = 1;
+  int emotion_top_padding = 1;
+  int chat_message_top_padding = 1;
+  const lv_font_t* emotion_font = &font_awesome_14_1;
+  
+  // 根据屏幕高度自适应调整布局
+  if (height_ <= 32) {
+    // 小屏幕 (128x32 等)
+    status_bar_height = height_ * 0.375;  // 约37.5% (32*0.375=12)
+    content_left_width = width_ * 0.15625; // 约15.6% (128*0.15625=20)
+    emotion_top_padding = 2;
+    chat_message_top_padding = 2;
+    emotion_font = &font_awesome_14_1;
+  } else if (height_ <= 64) {
+    // 中等屏幕 (128x64 等)
+    status_bar_height = height_ * 0.25;   // 25% (64*0.25=16)
+    content_left_width = width_ * 0.25;   // 25% (128*0.25=32)
+    emotion_top_padding = height_ * 0.125; // 12.5% (64*0.125=8)
+    chat_message_top_padding = height_ * 0.21875; // 约21.9% (64*0.21875≈14)
+    emotion_font = &font_awesome_30_1;
+  } else {
+    // 大屏幕 (128x128 等)
+    status_bar_height = height_ * 0.125;  // 12.5%
+    content_left_width = width_ * 0.25;   // 25%
+    emotion_top_padding = height_ * 0.0625; // 6.25%
+    chat_message_top_padding = height_ * 0.109375; // 约10.9%
+    emotion_font = &font_awesome_30_1;
+  }
+
   /* Container */
   container_ = lv_obj_create(screen);
   lv_obj_set_size(container_, LV_HOR_RES, LV_VER_RES);
@@ -65,14 +97,14 @@ void Display::Start() {
   lv_obj_set_style_border_width(container_, 0, 0);
   lv_obj_set_style_pad_row(container_, 0, 0);
 
-  /* Status bar */
+  /* Status bar - 自适应高度 */
   status_bar_ = lv_obj_create(container_);
-  lv_obj_set_size(status_bar_, LV_HOR_RES, 16);
+  lv_obj_set_size(status_bar_, LV_HOR_RES, status_bar_height);
   lv_obj_set_style_border_width(status_bar_, 0, 0);
   lv_obj_set_style_pad_all(status_bar_, 0, 0);
   lv_obj_set_style_radius(status_bar_, 0, 0);
 
-  /* Content */
+  /* Content - 剩余空间自动分配 */
   content_ = lv_obj_create(container_);
   lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_radius(content_, 0, 0);
@@ -82,17 +114,17 @@ void Display::Start() {
   lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
   lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
 
-  // 创建左侧固定宽度的容器
+  // 创建左侧固定宽度的容器 - 自适应宽度
   content_left_ = lv_obj_create(content_);
-  lv_obj_set_size(content_left_, 32, LV_SIZE_CONTENT);  // 固定宽度32像素
+  lv_obj_set_size(content_left_, content_left_width, LV_SIZE_CONTENT);
   lv_obj_set_style_pad_all(content_left_, 0, 0);
   lv_obj_set_style_border_width(content_left_, 0, 0);
 
   emotion_label_ = lv_label_create(content_left_);
-  lv_obj_set_style_text_font(emotion_label_, &font_awesome_30_1, 0);
+  lv_obj_set_style_text_font(emotion_label_, emotion_font, 0);  // 自适应字体，添加缺失的第三个参数
   lv_label_set_text(emotion_label_, FONT_AWESOME_AI_CHIP);
   lv_obj_center(emotion_label_);
-  lv_obj_set_style_pad_top(emotion_label_, 8, 0);
+  lv_obj_set_style_pad_top(emotion_label_, emotion_top_padding, 0);  // 自适应上边距
 
   content_right_ = lv_obj_create(content_);
   lv_obj_set_size(content_right_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -105,8 +137,8 @@ void Display::Start() {
   lv_label_set_text(chat_message_label_, "");
   lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
   lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_LEFT, 0);
-  lv_obj_set_width(chat_message_label_, width_ - 32);
-  lv_obj_set_style_pad_top(chat_message_label_, 14, 0);
+  lv_obj_set_width(chat_message_label_, width_ - content_left_width);  // 自适应宽度
+  lv_obj_set_style_pad_top(chat_message_label_, chat_message_top_padding, 0);  // 自适应上边距
 
   // 延迟一定的时间后开始滚动字幕
   static lv_anim_t a;
