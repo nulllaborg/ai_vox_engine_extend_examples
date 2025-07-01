@@ -1,4 +1,5 @@
 #include <DHT.h>
+#include <Wire.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_io_i2c.h>
 #include <esp_lcd_panel_ops.h>
