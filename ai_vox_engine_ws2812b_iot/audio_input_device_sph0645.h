@@ -67,22 +67,17 @@ class AudioInputDeviceSph0645 : public ai_vox::AudioInputDevice {
     i2s_rx_handle_ = nullptr;
   }
 
-  std::vector<int16_t> Read(uint32_t samples) override {
-    if (nullptr == i2s_rx_handle_) {
-      return std::vector<int16_t>();
-    }
-
-    std::vector<int32_t> data(samples);
+  size_t Read(int16_t* buffer, uint32_t samples) override {
+    auto raw_32bit_samples = new int32_t[samples];
     size_t bytes_read = 0;
-    i2s_channel_read(i2s_rx_handle_, data.data(), samples * sizeof(data[0]), &bytes_read, 1000);
+    i2s_channel_read(i2s_rx_handle_, raw_32bit_samples, samples * sizeof(raw_32bit_samples[0]), &bytes_read, 1000);
 
-    std::vector<int16_t> pcm(samples);
     for (int i = 0; i < samples; i++) {
-      int32_t value = data[i] >> 14;
-      pcm[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
+      int32_t value = raw_32bit_samples[i] >> 14;
+      buffer[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
     }
-
-    return pcm;
+    delete[] raw_32bit_samples;
+    return samples;
   }
 
   i2s_chan_handle_t i2s_rx_handle_ = nullptr;

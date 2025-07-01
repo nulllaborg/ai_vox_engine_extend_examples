@@ -1,4 +1,4 @@
-#include <Adafruit_NeoPixel.h>
+#include <FastLED.h>
 #include <WiFi.h>
 #include <cJSON.h>
 #include <driver/spi_common.h>
@@ -66,13 +66,13 @@ constexpr auto kDisplayRgbElementOrder = LCD_RGB_ELEMENT_ORDER_RGB;
 
 constexpr uint32_t kLedNum = 12;  // Led nums
 
+CRGB g_leds[kLedNum];
+
 std::shared_ptr<ai_vox::iot::Entity> g_ws2812b_iot_entity;
 auto g_audio_output_device = std::make_shared<ai_vox::I2sStdAudioOutputDevice>(kSpeakerPinBclk, kSpeakerPinWs, kSpeakerPinDout);
 
 std::unique_ptr<Display> g_display;
 auto g_observer = std::make_shared<ai_vox::Observer>();
-
-Adafruit_NeoPixel g_strip(kLedNum, kLedPin, NEO_GRB + NEO_KHZ800);
 
 void InitDisplay() {
   pinMode(kDisplayBacklightPin, OUTPUT);
@@ -162,7 +162,7 @@ void InitIot() {
        {
            {
                "index",                          // parameter name
-               "LED索引(0-总数-1)",              // parameter description
+               "LED索引(1-总数)",                // parameter description
                ai_vox::iot::ValueType::kNumber,  // parameter type
                true                              // parameter required
            },
@@ -174,16 +174,8 @@ void InitIot() {
       {"SetRangeIndexsColor",
        "设置连续LED范围颜色",
        {
-           {"start", "起始LED索引(0-总数-1)", ai_vox::iot::ValueType::kNumber, true},
-           {"end", "结束LED索引(0-总数-1)", ai_vox::iot::ValueType::kNumber, true},
-           {"red", "红色值(0-255)", ai_vox::iot::ValueType::kNumber, true},
-           {"green", "绿色值(0-255)", ai_vox::iot::ValueType::kNumber, true},
-           {"blue", "蓝色值(0-255)", ai_vox::iot::ValueType::kNumber, true},
-           // add more parameters as needed
-       }},
-      {"SetAllIndexsColor",
-       "设置所有LED颜色",
-       {
+           {"start", "起始LED索引(1-总数)", ai_vox::iot::ValueType::kNumber, true},
+           {"end", "结束LED索引(1-总数)", ai_vox::iot::ValueType::kNumber, true},
            {"red", "红色值(0-255)", ai_vox::iot::ValueType::kNumber, true},
            {"green", "绿色值(0-255)", ai_vox::iot::ValueType::kNumber, true},
            {"blue", "蓝色值(0-255)", ai_vox::iot::ValueType::kNumber, true},
@@ -220,9 +212,9 @@ void InitIot() {
 }
 
 void InitWs2812b() {
-  g_strip.begin();
-  g_strip.setBrightness(128);  // Set the default brightness to medium
-  g_strip.show();              // Turn off all LEDs during initialization
+  FastLED.addLeds<NEOPIXEL, kLedPin>(g_leds, kLedNum);
+  FastLED.setBrightness(128);
+  FastLED.show();
 }
 
 std::string ConvertRGBToJsonString(const int64_t red, const int64_t green, const int64_t blue) {
@@ -261,22 +253,6 @@ std::string ConvertRGBToJsonString(const int64_t red, const int64_t green, const
   cJSON_Delete(root);
 
   return result;
-}
-
-// Implementation of Region Filling Function - RGB version
-void FillRangeLed(const uint16_t start_index, const uint16_t end_index, const uint8_t red, const uint8_t green, const uint8_t blue) {
-  // Ensure that the starting and ending Indexs are within the valid range
-  if (start_index >= kLedNum || end_index >= kLedNum || start_index > end_index) {
-    printf("Error: start_index or end_index out of range (0-%d), got: start_index: %lld , end_index: %lld\n", kLedNum - 1, start_index, end_index);
-    return;
-  }
-
-  const uint32_t color_value = g_strip.Color(red, green, blue);
-
-  // Implementation of Region Filling Function
-  for (uint16_t i = start_index; i <= end_index; i++) {
-    g_strip.setPixelColor(i, color_value);
-  }
 }
 
 #ifdef PRINT_HEAP_INFO_INTERVAL
@@ -326,8 +302,6 @@ void PrintMemInfo() {
 void setup() {
   Serial.begin(115200);
 
-  InitWs2812b();
-
   InitDisplay();
   if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM) == 0) {
     g_display->SetChatMessage(Display::Role::kSystem, "No SPIRAM available, please check your board.");
@@ -350,6 +324,7 @@ void setup() {
   g_display->ShowStatus("Wifi connected");
 
   InitIot();
+  InitWs2812b();
 
   auto audio_input_device = std::make_shared<AudioInputDeviceSph0645>(kMicPinBclk, kMicPinWs, kMicPinDin);
   auto& ai_vox_engine = ai_vox::Engine::GetInstance();
@@ -444,7 +419,6 @@ void loop() {
 
       if (iot_message_event->name == "WS2812B") {
         if (iot_message_event->function == "SetIndexColor") {  // Specify the color of a certain light
-
           int64_t index = 0;
           int64_t red = 0;
           int64_t green = 0;
@@ -454,8 +428,8 @@ void loop() {
             if (std::get_if<int64_t>(&it->second)) {
               index = std::get<int64_t>(it->second);
 
-              if (index < 0 || index >= kLedNum) {
-                printf("Error: lamp number is out of range (0-%d), got: %lld\n", kLedNum - 1, index);
+              if (index < 1 || index > kLedNum) {
+                printf("Error: lamp number is out of range (1-%d), got: %lld\n", kLedNum, index);
                 continue;
               }
             } else {
@@ -520,13 +494,12 @@ void loop() {
 
           printf("Set LED %lld to color RGB(%lld, %lld, %lld)\n", index, red, green, blue);
 
-          const std::string property_name = "color" + std::to_string(index + 1);
+          const std::string property_name = "color" + std::to_string(index);
 
           const std::string color_str = ConvertRGBToJsonString(red, green, blue);
           g_ws2812b_iot_entity->UpdateState(std::move(property_name), std::move(color_str));
-          g_strip.setPixelColor(index, g_strip.Color(red, green, blue));
-
-          g_strip.show();
+          g_leds[index - 1] = CRGB(red, green, blue);
+          FastLED.show();
 
         } else if (iot_message_event->function == "SetRangeIndexsColor") {  // Set the color from one light to another
           int64_t start = 0;
@@ -539,8 +512,8 @@ void loop() {
             if (std::get_if<int64_t>(&it->second)) {
               start = std::get<int64_t>(it->second);
 
-              if (start < 0 || start >= kLedNum) {
-                printf("Error: start lamp number is out of range (0-%d), got: %lld\n", kLedNum - 1, start);
+              if (start < 1 || start > kLedNum) {
+                printf("Error: start lamp number is out of range (1-%d), got: %lld\n", kLedNum, start);
                 continue;
               }
             } else {
@@ -556,8 +529,8 @@ void loop() {
             if (std::get_if<int64_t>(&it->second)) {
               end = std::get<int64_t>(it->second);
 
-              if (end < 0 || end >= kLedNum) {
-                printf("Error: end lamp number is out of range (0-%d), got: %lld\n", kLedNum - 1, end);
+              if (end < 1 || end > kLedNum) {
+                printf("Error: end lamp number is out of range (0-%d), got: %lld\n", kLedNum, end);
                 continue;
               }
             } else {
@@ -620,7 +593,6 @@ void loop() {
             continue;
           }
 
-          // ensure   start <= end
           if (start > end) {
             printf("Error: start number > end number,please check.\n");
             continue;
@@ -628,83 +600,14 @@ void loop() {
 
           printf("Set LEDs from %lld to %lld to color RGB(%lld, %lld, %lld)\n", start, end, red, green, blue);
 
-          // Send operation instructions to WS2812B
-          FillRangeLed(start, end, red, green, blue);
+          // Fill the specified range of LED colors using FastLED's fill_stolid function
+          fill_solid(&g_leds[start - 1], end - start + 1, CRGB(red, green, blue));
+          FastLED.show();
           const std::string color_str = ConvertRGBToJsonString(red, green, blue);
-          for (uint32_t i = start + 1; i <= end + 1; ++i) {
+          for (uint32_t i = start; i <= end; ++i) {
             const std::string property_name = "color" + std::to_string(i);
-            g_ws2812b_iot_entity->UpdateState(std::move(property_name), std::move(color_str));
+            g_ws2812b_iot_entity->UpdateState(std::move(property_name), color_str);
           }
-          g_strip.show();
-
-        } else if (iot_message_event->function == "SetAllIndexsColor") {  // Unified setting of all lights
-          int64_t red = 0;
-          int64_t green = 0;
-          int64_t blue = 0;
-
-          if (const auto it = iot_message_event->parameters.find("red"); it != iot_message_event->parameters.end()) {
-            if (std::get_if<int64_t>(&it->second)) {
-              red = std::get<int64_t>(it->second);
-
-              if (red < 0 || red > 255) {
-                printf("Error: 'red' out of range (0-255), got: %lld\n", red);
-                continue;
-              }
-            } else {
-              printf("Error: Missing required parameter 'red'.\n");
-              continue;
-            }
-          } else {
-            printf("Error: parameter 'red' not obtained, please check.\n");
-            continue;
-          }
-
-          if (const auto it = iot_message_event->parameters.find("green"); it != iot_message_event->parameters.end()) {
-            if (std::get_if<int64_t>(&it->second)) {
-              green = std::get<int64_t>(it->second);
-
-              if (green < 0 || green > 255) {
-                printf("Error: 'red' out of range (0-255), got: %lld\n", green);
-                continue;
-              }
-            } else {
-              printf("Error: Missing required parameter 'green'.\n");
-              continue;
-            }
-          } else {
-            printf("Error: parameter 'green' not obtained, please check.\n");
-            continue;
-          }
-
-          if (const auto it = iot_message_event->parameters.find("blue"); it != iot_message_event->parameters.end()) {
-            if (std::get_if<int64_t>(&it->second)) {
-              blue = std::get<int64_t>(it->second);
-
-              if (blue < 0 || blue > 255) {
-                printf("Error: 'red' out of range (0-255), got: %lld\n", blue);
-                continue;
-              }
-            } else {
-              printf("Error: Missing required parameter 'blue'.\n");
-              continue;
-            }
-          } else {
-            printf("Error: parameter 'blue' not obtained, please check.\n");
-            continue;
-          }
-
-          printf("Set all LEDs to color RGB(%lld, %lld, %lld)\n", red, green, blue);
-
-          // Send operation instructions to WS2812B
-          uint32_t color = g_strip.Color(red, green, blue);
-          g_strip.fill(color);
-          const std::string color_str = ConvertRGBToJsonString(red, green, blue);
-          for (uint32_t i = 1; i <= kLedNum; ++i) {
-            const std::string property_name = "color" + std::to_string(i);
-            g_ws2812b_iot_entity->UpdateState(std::move(property_name), std::move(color_str));
-          }
-          g_strip.show();
-
         } else if (iot_message_event->function == "SetBrightness") {  // Set Brightness
           int64_t brightness = 0;
 
@@ -725,18 +628,18 @@ void loop() {
             continue;
           }
           printf("Set LED brightness: %lld\n", brightness);
-          g_strip.setBrightness(static_cast<uint8_t>(brightness));
-          g_strip.show();
+          FastLED.setBrightness(brightness);
+          FastLED.show();
           g_ws2812b_iot_entity->UpdateState("brightness", brightness);
 
         } else if (iot_message_event->function == "Clear") {  // Turn off all lights
           printf("Clear all LEDs\n");
 
-          g_strip.clear();
-          g_strip.show();
+          FastLED.clear();
+          FastLED.show();
           for (uint32_t i = 1; i <= kLedNum; ++i) {
             std::string property_name = "color" + std::to_string(i);
-            g_ws2812b_iot_entity->UpdateState(property_name, R"({"red":0,"green":0,"blue":0})");
+            g_ws2812b_iot_entity->UpdateState(std::move(property_name), R"({"red":0,"green":0,"blue":0})");
           }
         }
       }

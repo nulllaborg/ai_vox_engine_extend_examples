@@ -1,0 +1,1 @@
+-fno-exceptions -Wall -Werror -DCONFIG_ESP_WS_CLIENT_ENABLE_DYNAMIC_BUFFER
