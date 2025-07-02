@@ -29,11 +29,8 @@
 #endif
 
 namespace {
-// Definition of servo A pin
-constexpr gpio_num_t kServoAPin = GPIO_NUM_46;
-
-// Definition of servo B pin
-constexpr gpio_num_t kServoBPin = GPIO_NUM_47;
+// Servo pin array
+constexpr gpio_num_t kServoPins[] = {GPIO_NUM_46, GPIO_NUM_47};
 
 constexpr gpio_num_t kMicPinBclk = GPIO_NUM_5;
 constexpr gpio_num_t kMicPinWs = GPIO_NUM_2;
@@ -52,8 +49,6 @@ constexpr gpio_num_t kDisplayDcPin = GPIO_NUM_12;
 constexpr gpio_num_t kDisplayRstPin = GPIO_NUM_21;
 constexpr gpio_num_t kDisplayCsPin = GPIO_NUM_15;
 
-constexpr gpio_num_t kWs2812LedPin = GPIO_NUM_41;
-
 constexpr auto kDisplaySpiMode = 0;
 constexpr uint32_t kDisplayWidth = 240;
 constexpr uint32_t kDisplayHeight = 240;
@@ -63,7 +58,8 @@ constexpr bool kDisplayInvertColor = true;
 constexpr bool kDisplaySwapXY = false;
 constexpr auto kDisplayRgbElementOrder = LCD_RGB_ELEMENT_ORDER_RGB;
 
-constexpr uint32_t kFreq = 50;
+constexpr uint32_t kServoCount = 2;  // Total number of servos
+constexpr uint32_t kServoFreq = 50;
 constexpr uint32_t kResolution = 12;
 constexpr uint32_t kMinPulse = 500;
 constexpr uint32_t kMaxPulse = 2500;
@@ -134,31 +130,23 @@ void InitIot() {
 
   // g_servo_iot_controller
   // 1. Define the properties of the g_servo_iot_controller motor entity
-  std::vector<ai_vox::iot::Property> servo_iot_properties({
-      {
-          "anglevalue_a",                      // property name
-          "舵机A的当前角度(0-180之间的整数)",  // property description
-          ai_vox::iot::ValueType::kNumber      // property type: number, string or bool
-      },
-      {"anglevalue_b", "舵机B的当前角度(0-180之间的整数)", ai_vox::iot::ValueType::kNumber},
-      // add more properties as needed
-  });
+  std::vector<ai_vox::iot::Property> servo_iot_properties;
+  for (uint32_t i = 0; i < kServoCount; i++) {
+    const std::string property_name = std::to_string(i + 1) + "号舵机";
+    const std::string describe = std::to_string(i + 1) + "号舵机的当前角度(0-180之间的整数)";
+    servo_iot_properties.push_back({
+        std::move(property_name),        // property name
+        std::move(describe),             // property description
+        ai_vox::iot::ValueType::kNumber  // property type
+    });
+  }
   // 2.Define the functions for the g_servo_iot_controller motor entity
   std::vector<ai_vox::iot::Function> servo_iot_functions({
-
-      {"SetSenvoA",      // function name
-       "设置舵机A角度",  // function description
-       {{
-           "anglevalue_a",                   // parameter name
-           "舵机角度(0-180之间的整数)",      // parameter description
-           ai_vox::iot::ValueType::kNumber,  // parameter type
-           true                              // parameter required
-       }}},
-      {"SetSenvoB", "设置舵机B角度", {{"anglevalue_b", "舵机角度(0-180之间的整数)", ai_vox::iot::ValueType::kNumber, true}}},
-      {"SetBothServo",
-       "同时设置舵机A和舵机B角度",
-       {{"anglevalue_a", "舵机A角度(0-180之间的整数)", ai_vox::iot::ValueType::kNumber, true},
-        {"anglevalue_b", "舵机B角度(0-180之间的整数)", ai_vox::iot::ValueType::kNumber, true}}}
+      {"SetOneServo",
+       "设置单个舵机角度",
+       {{"anglevalue", "舵机角度(0-180之间的整数)", ai_vox::iot::ValueType::kNumber, true},
+        {"index", "舵机编号", ai_vox::iot::ValueType::kNumber, true}}},
+      {"SetAllServos", "设置所有舵机角度", {{"anglevalue", "舵机角度(0-180之间的整数)", ai_vox::iot::ValueType::kNumber, true}}}
 
       // add more functions as needed
   });
@@ -170,56 +158,44 @@ void InitIot() {
   );
 
   // 4.Initialize the g_servo_iot_controller motor entity with default values
-  g_servo_iot_entity->UpdateState("anglevalue_a", 90);
-  g_servo_iot_entity->UpdateState("anglevalue_b", 90);
+  for (uint32_t i = 0; i < kServoCount; i++) {
+    const std::string property_name = std::to_string(i + 1) + "号舵机";
+    g_servo_iot_entity->UpdateState(std::move(property_name), 90);
+  }
 
   // 5.Register the g_servo_iot_controller motor entity with the AI Vox engine
   ai_vox_engine.RegisterIotEntity(g_servo_iot_entity);
 }
 
-void InitServo(const gpio_num_t pin, const ledc_channel_t channel) {
-  // Configure Timer
-  ledc_timer_config_t timer_conf = {.speed_mode = LEDC_LOW_SPEED_MODE,
-                                    .duty_resolution = static_cast<ledc_timer_bit_t>(kResolution),
-                                    .timer_num = LEDC_TIMER_1,  // Two servos share one timer (ensuring that channels do not conflict)
-                                    .freq_hz = kFreq,
-                                    .clk_cfg = LEDC_AUTO_CLK};
-  ledc_timer_config(&timer_conf);
-
-  ledc_channel_config_t channel_conf = {
-      .gpio_num = pin,
-      .speed_mode = LEDC_LOW_SPEED_MODE,
-      .channel = channel,
-      .intr_type = LEDC_INTR_DISABLE,
-      .timer_sel = LEDC_TIMER_0,
-      .duty = 0,
-      .hpoint = 0,
-  };
-
-  ledc_channel_config(&channel_conf);
-}
-
 uint32_t CalculateDuty(int64_t angle) {
   // Map the angle to the pulse width（500-2500μs）
   const uint32_t pulse_width = map(angle, 0, 180, kMinPulse, kMaxPulse);
-  return (pulse_width * (1 << kResolution)) / (1000000 / kFreq);
+  return (pulse_width * (1 << kResolution)) / (1000000 / kServoFreq);
 }
 
-void SetServoAngle(const char servo, const int64_t angle) {
-  const uint32_t duty = CalculateDuty(angle);
+void InitServos() {
+  const uint32_t duty = CalculateDuty(90);
+  for (uint32_t i = 0; i < kServoCount; i++) {
+    analogWriteResolution(kServoPins[i], kResolution);
+    analogWriteFrequency(kServoPins[i], kServoFreq);
 
-  switch (servo) {
-    case 'A':
-      ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
-      ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-      break;
-    case 'B':
-      ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty);
-      ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
-      break;
-    default:
-      return;  // Invalid servo motor identifier
+    pinMode(kServoPins[i], OUTPUT);
+    analogWrite(kServoPins[i], duty);  // 初始化为90度位置
   }
+}
+
+void SetServoAngle(int64_t servo_index, int64_t angle) {
+  if (servo_index > kServoCount) {
+    printf("Error: Invalid servo index: %d\n", servo_index);
+    return;
+  }
+  if (angle < 0 || angle > 180) {
+    printf("Error: Invalid servo angle: %lld for index: %lld\n", angle, servo_index);
+    return;
+  }
+
+  const uint32_t duty = CalculateDuty(angle);
+  analogWrite(kServoPins[servo_index], duty);
 }
 
 #ifdef PRINT_HEAP_INFO_INTERVAL
@@ -287,16 +263,11 @@ void setup() {
     delay(1000);
     printf("Connecting to WiFi, ssid: %s, password: %s\n", WIFI_SSID, WIFI_PASSWORD);
   }
-
   printf("WiFi connected, IP address: %s\n", WiFi.localIP().toString().c_str());
   g_display->ShowStatus("Wifi connected");
 
   InitIot();
-
-  InitServo(kServoAPin, LEDC_CHANNEL_0);
-  InitServo(kServoBPin, LEDC_CHANNEL_1);
-  SetServoAngle('A', 90);
-  SetServoAngle('B', 90);
+  InitServos();
 
   auto audio_input_device = std::make_shared<AudioInputDeviceSph0645>(kMicPinBclk, kMicPinWs, kMicPinDin);
   auto& ai_vox_engine = ai_vox::Engine::GetInstance();
@@ -390,96 +361,73 @@ void loop() {
       }
 
       if (iot_message_event->name == "Servo") {
-        if (iot_message_event->function == "SetBothServo") {  // Simultaneously set the angle of servo A and servo B
-          int64_t anglevalue_a;
-          int64_t anglevalue_b;
+        if (iot_message_event->function == "SetAllServos") {  // Simultaneously set the angle of servo A and servo B
+          int64_t anglevalue = 0;
 
-          if (const auto it = iot_message_event->parameters.find("anglevalue_a"); it != iot_message_event->parameters.end()) {
+          if (const auto it = iot_message_event->parameters.find("anglevalue"); it != iot_message_event->parameters.end()) {
             if (std::get_if<int64_t>(&it->second)) {
-              anglevalue_a = std::get<int64_t>(it->second);
+              anglevalue = std::get<int64_t>(it->second);
 
-              if (anglevalue_a < 0 || anglevalue_a > 180) {
-                printf("Error: servo A angle is out of range (0-180), got: %lld\n", anglevalue_a);
+              if (anglevalue < 0 || anglevalue > 180) {
+                printf("Error: servo angle is out of range (0-180), got: %lld\n", anglevalue);
                 continue;
               }
             } else {
-              printf("Error: servo A angle acquisition failed, please check.\n");
+              printf("Error: servo angle acquisition failed, please check.\n");
               continue;
             }
           } else {
-            printf("Error: Parameter 'anglevalue_a' not obtained, please check.\n");
+            printf("Error: Parameter 'anglevalue' not obtained, please check.\n");
             continue;
           }
-          if (const auto it = iot_message_event->parameters.find("anglevalue_b"); it != iot_message_event->parameters.end()) {
-            if (std::get_if<int64_t>(&it->second)) {
-              anglevalue_b = std::get<int64_t>(it->second);
 
-              if (anglevalue_b < 0 || anglevalue_b > 180) {
-                printf("Error: servo B angle is out of range (0-180), got: %lld\n", anglevalue_b);
+          printf("Set all servos to angle: %lld\n", anglevalue);
+          for (uint32_t i = 0; i < kServoCount; ++i) {
+            SetServoAngle(i, anglevalue);
+            const std::string property_name = std::to_string(i + 1) + "号舵机";
+            g_servo_iot_entity->UpdateState(std::move(property_name), anglevalue);
+          }
+        } else if (iot_message_event->function == "SetOneServo") {  // Set the angle of servo A
+          int64_t anglevalue = 0;
+          int64_t index = 0;
+
+          if (const auto it = iot_message_event->parameters.find("anglevalue"); it != iot_message_event->parameters.end()) {
+            if (std::get_if<int64_t>(&it->second)) {
+              anglevalue = std::get<int64_t>(it->second);
+
+              if (anglevalue < 0 || anglevalue > 180) {
+                printf("Error: servo angle is out of range (0-180), got: %lld\n", anglevalue);
                 continue;
               }
             } else {
-              printf("Error: servo B angle acquisition failed, please check.\n");
+              printf("Error: servo angle acquisition failed, please check.\n");
               continue;
             }
           } else {
-            printf("Error: Parameter 'angle' not obtained, please check.\n");
+            printf("Error: Parameter 'anglevalue' not obtained, please check.\n");
             continue;
           }
-
-          printf("Starting both servos - ServoA: Angle %lld | ServoB: Angle %lld\n", anglevalue_a, anglevalue_b);
-          // Servo control function call
-          SetServoAngle('A', anglevalue_a);  // Set servo A
-          SetServoAngle('B', anglevalue_b);  // Set servo B
-          g_servo_iot_entity->UpdateState("anglevalue_a", anglevalue_a);
-          g_servo_iot_entity->UpdateState("anglevalue_b", anglevalue_b);
-        } else if (iot_message_event->function == "SetSenvoA") {  // Set the angle of servo A
-          int64_t anglevalue_a;
-
-          if (const auto it = iot_message_event->parameters.find("anglevalue_a"); it != iot_message_event->parameters.end()) {
+          if (const auto it = iot_message_event->parameters.find("index"); it != iot_message_event->parameters.end()) {
             if (std::get_if<int64_t>(&it->second)) {
-              anglevalue_a = std::get<int64_t>(it->second);
+              index = std::get<int64_t>(it->second);
 
-              if (anglevalue_a < 0 || anglevalue_a > 180) {
-                printf("Error: servo B angle is out of range (0-180), got: %lld\n", anglevalue_a);
+              if (index < 0 || index > kServoCount) {
+                printf("Error: Servo number is out of range (1-%d), got: %lld\n", kServoCount, index);
                 continue;
               }
             } else {
-              printf("Error: servo B angle acquisition failed, please check.\n");
+              printf("Error: kServoCount - 1 acquisition failed, please check.\n");
               continue;
             }
           } else {
-            printf("Error: Parameter 'angle' not obtained, please check.\n");
+            printf("Error: Parameter 'index' not obtained, please check.\n");
             continue;
           }
 
-          printf("Setting ServoA - Angle: %lld\n", anglevalue_a);
-          SetServoAngle('A', anglevalue_a);  // Set servo A
-          g_servo_iot_entity->UpdateState("anglevalue_a", anglevalue_a);
-
-        } else if (iot_message_event->function == "SetSenvoB") {  // Set the angle of servo B
-          int64_t anglevalue_b;
-
-          if (const auto it = iot_message_event->parameters.find("anglevalue_b"); it != iot_message_event->parameters.end()) {
-            if (std::get_if<int64_t>(&it->second)) {
-              anglevalue_b = std::get<int64_t>(it->second);
-
-              if (anglevalue_b < 0 || anglevalue_b > 180) {
-                printf("Error: servo B angle is out of range (0-180), got: %lld\n", anglevalue_b);
-                continue;
-              }
-            } else {
-              printf("Error: servo B angle acquisition failed, please check.\n");
-              continue;
-            }
-          } else {
-            printf("Error: Parameter 'angle' not obtained, please check.\n");
-            continue;
-          }
-
-          printf("Setting ServoB - Angle: %lld\n", anglevalue_b);
-          SetServoAngle('B', anglevalue_b);  // Set servo B
-          g_servo_iot_entity->UpdateState("anglevalue_b", anglevalue_b);
+          printf("Set servo %lld to angle: %lld\n", index, anglevalue);
+          SetServoAngle(index - 1, anglevalue);
+          const std::string property_name = std::to_string(index) + "号舵机";
+          g_servo_iot_entity->UpdateState(std::move(property_name), anglevalue);
         }
       }
     }
