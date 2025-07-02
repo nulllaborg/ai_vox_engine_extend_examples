@@ -30,7 +30,7 @@
 
 namespace {
 // Servo pin array
-constexpr gpio_num_t kServoPins[] = {GPIO_NUM_46, GPIO_NUM_47};
+constexpr gpio_num_t kServoPinArray[2] = {GPIO_NUM_46, GPIO_NUM_47};
 
 constexpr gpio_num_t kMicPinBclk = GPIO_NUM_5;
 constexpr gpio_num_t kMicPinWs = GPIO_NUM_2;
@@ -59,8 +59,8 @@ constexpr bool kDisplaySwapXY = false;
 constexpr auto kDisplayRgbElementOrder = LCD_RGB_ELEMENT_ORDER_RGB;
 
 constexpr uint32_t kServoCount = 2;  // Total number of servos
-constexpr uint32_t kServoFreq = 50;
-constexpr uint32_t kResolution = 12;
+constexpr uint32_t kServoFrequency = 50;
+constexpr uint32_t kServoResolution = 12;
 constexpr uint32_t kMinPulse = 500;
 constexpr uint32_t kMaxPulse = 2500;
 
@@ -131,12 +131,12 @@ void InitIot() {
   // g_servo_iot_controller
   // 1. Define the properties of the g_servo_iot_controller motor entity
   std::vector<ai_vox::iot::Property> servo_iot_properties;
-  for (uint32_t i = 0; i < kServoCount; i++) {
-    const std::string property_name = std::to_string(i + 1) + "号舵机";
-    const std::string describe = std::to_string(i + 1) + "号舵机的当前角度(0-180之间的整数)";
+  for (uint32_t i = 1; i <= kServoCount; i++) {
+    const std::string property_name = std::to_string(i) + "号舵机";
+    const std::string property_describe = std::to_string(i) + "号舵机的当前角度(0-180之间的整数)";
     servo_iot_properties.push_back({
         std::move(property_name),        // property name
-        std::move(describe),             // property description
+        std::move(property_describe),    // property description
         ai_vox::iot::ValueType::kNumber  // property type
     });
   }
@@ -158,8 +158,8 @@ void InitIot() {
   );
 
   // 4.Initialize the g_servo_iot_controller motor entity with default values
-  for (uint32_t i = 0; i < kServoCount; i++) {
-    const std::string property_name = std::to_string(i + 1) + "号舵机";
+  for (uint32_t i = 1; i <= kServoCount; i++) {
+    const std::string property_name = std::to_string(i) + "号舵机";
     g_servo_iot_entity->UpdateState(std::move(property_name), 90);
   }
 
@@ -167,24 +167,24 @@ void InitIot() {
   ai_vox_engine.RegisterIotEntity(g_servo_iot_entity);
 }
 
-uint32_t CalculateDuty(int64_t angle) {
+uint32_t CalculateDuty(const int64_t angle) {
   // Map the angle to the pulse width（500-2500μs）
   const uint32_t pulse_width = map(angle, 0, 180, kMinPulse, kMaxPulse);
-  return (pulse_width * (1 << kResolution)) / (1000000 / kServoFreq);
+  return (pulse_width * (1 << kServoResolution)) / (1000000 / kServoFrequency);
 }
 
 void InitServos() {
   const uint32_t duty = CalculateDuty(90);
   for (uint32_t i = 0; i < kServoCount; i++) {
-    analogWriteResolution(kServoPins[i], kResolution);
-    analogWriteFrequency(kServoPins[i], kServoFreq);
+    analogWriteResolution(kServoPinArray[i], kServoResolution);
+    analogWriteFrequency(kServoPinArray[i], kServoFrequency);
 
-    pinMode(kServoPins[i], OUTPUT);
-    analogWrite(kServoPins[i], duty);  // 初始化为90度位置
+    pinMode(kServoPinArray[i], OUTPUT);
+    analogWrite(kServoPinArray[i], duty);  // Initialize to 90 degree position
   }
 }
 
-void SetServoAngle(int64_t servo_index, int64_t angle) {
+void SetServoAngle(const int64_t servo_index, const int64_t angle) {
   if (servo_index > kServoCount) {
     printf("Error: Invalid servo index: %d\n", servo_index);
     return;
@@ -195,7 +195,7 @@ void SetServoAngle(int64_t servo_index, int64_t angle) {
   }
 
   const uint32_t duty = CalculateDuty(angle);
-  analogWrite(kServoPins[servo_index], duty);
+  analogWrite(kServoPinArray[servo_index], duty);
 }
 
 #ifdef PRINT_HEAP_INFO_INTERVAL
@@ -256,7 +256,6 @@ void setup() {
   }
 
   g_display->ShowStatus("Wifi connecting...");
-
   WiFi.useStaticBuffers(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
@@ -382,9 +381,9 @@ void loop() {
           }
 
           printf("Set all servos to angle: %lld\n", anglevalue);
-          for (uint32_t i = 0; i < kServoCount; ++i) {
-            SetServoAngle(i, anglevalue);
-            const std::string property_name = std::to_string(i + 1) + "号舵机";
+          for (uint32_t i = 1; i <= kServoCount; i++) {
+            SetServoAngle(i - 1, anglevalue);
+            const std::string property_name = std::to_string(i) + "号舵机";
             g_servo_iot_entity->UpdateState(std::move(property_name), anglevalue);
           }
         } else if (iot_message_event->function == "SetOneServo") {  // Set the angle of servo A
