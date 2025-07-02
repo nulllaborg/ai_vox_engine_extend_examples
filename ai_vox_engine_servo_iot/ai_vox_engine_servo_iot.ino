@@ -30,7 +30,7 @@
 
 namespace {
 // Servo pin array
-constexpr gpio_num_t kServoPins[2] = {GPIO_NUM_46, GPIO_NUM_47};
+constexpr gpio_num_t kServoPins[] = {GPIO_NUM_46, GPIO_NUM_47};
 
 constexpr gpio_num_t kMicPinBclk = GPIO_NUM_5;
 constexpr gpio_num_t kMicPinWs = GPIO_NUM_2;
