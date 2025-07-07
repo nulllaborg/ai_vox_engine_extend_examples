@@ -60,8 +60,6 @@ constexpr bool kDisplayInvertColor = true;
 constexpr bool kDisplaySwapXY = false;
 constexpr auto kDisplayRgbElementOrder = LCD_RGB_ELEMENT_ORDER_RGB;
 
-constexpr bool kForword = true;  // Indicate forward rotation
-
 std::shared_ptr<ai_vox::iot::Entity> g_motor_driver_iot_entity;
 auto g_audio_output_device = std::make_shared<ai_vox::I2sStdAudioOutputDevice>(kSpeakerPinBclk, kSpeakerPinWs, kSpeakerPinDout);
 
@@ -131,11 +129,11 @@ void InitIot() {
   // 1.Define the properties for the motor driver entity
   std::vector<ai_vox::iot::Property> motor_driver_properties;
 
-  for (uint32_t i = 1; i <= sizeof(kMotorPins) / sizeof(kMotorPins[0]); i++) {
+  for (uint32_t i = 1; i <= kMotorPins.size(); i++) {
     std::string property_speed_name = "speed_" + std::to_string(i);
     std::string property_speed_describe = std::to_string(i) + "号电机的当前速度(0-255)";
-    std::string property_direction_name = "direction_" + std::to_string(i);
-    std::string property_direction_describe = std::to_string(i) + "号电机的当前方向(ture: 表示电机正转, false: 表示电机反转)";
+    std::string property_forword_name = "forword_" + std::to_string(i);
+    std::string property_forword_describe = std::to_string(i) + "号电机的当前方向(ture: 表示电机正转, false: 表示电机反转)";
 
     motor_driver_properties.push_back({
         std::move(property_speed_name),      // property name
@@ -143,9 +141,9 @@ void InitIot() {
         ai_vox::iot::ValueType::kNumber      // property type
     });
     motor_driver_properties.push_back({
-        std::move(property_direction_name),      // property name
-        std::move(property_direction_describe),  // property description
-        ai_vox::iot::ValueType::kBool            // property type
+        std::move(property_forword_name),      // property name
+        std::move(property_forword_describe),  // property description
+        ai_vox::iot::ValueType::kBool          // property type
     });
   }
 
@@ -154,12 +152,12 @@ void InitIot() {
       {"SetOneMotor",
        "设置单个电机",
        {{"speed", "电机速度(0-255)", ai_vox::iot::ValueType::kNumber, true},
-        {"direction", "电机方向(true: 电机正转, false: 电机反转)", ai_vox::iot::ValueType::kBool, true},
+        {"forword", "电机方向(true: 电机正转, false: 电机反转)", ai_vox::iot::ValueType::kBool, true},
         {"index", "电机编号(1-总数)", ai_vox::iot::ValueType::kNumber, true}}},
       {"SetAllMotors",
        "统一设置所有电机",
        {{"speed", "电机速度(0-255)", ai_vox::iot::ValueType::kNumber, true},
-        {"direction", "电机方向(true: 电机正转, false: 电机反转)", ai_vox::iot::ValueType::kBool, true}}}
+        {"forword", "电机方向(true: 电机正转, false: 电机反转)", ai_vox::iot::ValueType::kBool, true}}}
 
       // add more functions as needed
   });
@@ -172,12 +170,12 @@ void InitIot() {
   );
 
   // 4.Initialize the motor driver entity with default values
-  for (uint32_t i = 1; i <= sizeof(kMotorPins) / sizeof(kMotorPins[0]); i++) {
+  for (uint32_t i = 1; i <= kMotorPins.size(); i++) {
     std::string property_speed_name = "speed_" + std::to_string(i);
-    std::string property_direction_name = "direction_" + std::to_string(i);
+    std::string property_forword_name = "forword_" + std::to_string(i);
 
     g_motor_driver_iot_entity->UpdateState(std::move(property_speed_name), 0);
-    g_motor_driver_iot_entity->UpdateState(std::move(property_direction_name), kForword);
+    g_motor_driver_iot_entity->UpdateState(std::move(property_forword_name), true);
   }
 
   // 5.Register the motor driver entity with the AI Vox engine
@@ -185,7 +183,7 @@ void InitIot() {
 }
 
 void SetMotorDirectionSpeed(const int64_t motor_index, const bool forword, const int64_t speed) {
-  if (motor_index < 0 || motor_index >= sizeof(kMotorPins) / sizeof(kMotorPins[0])) {
+  if (motor_index < 0 || motor_index >= kMotorPins.size()) {
     printf("Error: invalid motor index: %d .\n", motor_index);
     return;
   }
@@ -205,7 +203,7 @@ void SetMotorDirectionSpeed(const int64_t motor_index, const bool forword, const
 }
 
 void InitMotors() {
-  for (uint32_t i = 0; i < sizeof(kMotorPins) / sizeof(kMotorPins[0]); i++) {
+  for (uint32_t i = 0; i < kMotorPins.size(); i++) {
     pinMode(kMotorPins[i].first, OUTPUT);
     pinMode(kMotorPins[i].second, OUTPUT);
 
@@ -378,7 +376,7 @@ void loop() {
       if (iot_message_event->name == "MotorDriver") {
         if (iot_message_event->function == "SetAllMotors") {  // Simultaneously activate motors A and B
           int64_t speed = 0;
-          bool direction = kForword;
+          bool forword = true;
 
           if (const auto it = iot_message_event->parameters.find("speed"); it != iot_message_event->parameters.end()) {
             if (std::get_if<int64_t>(&it->second)) {
@@ -397,31 +395,31 @@ void loop() {
             continue;
           }
 
-          if (const auto it = iot_message_event->parameters.find("direction"); it != iot_message_event->parameters.end()) {
+          if (const auto it = iot_message_event->parameters.find("forword"); it != iot_message_event->parameters.end()) {
             if (std::get_if<bool>(&it->second)) {
-              direction = std::get<bool>(it->second);
+              forword = std::get<bool>(it->second);
 
             } else {
-              printf("Error: motor direction acquisition failed, please check.\n");
+              printf("Error: motor forword acquisition failed, please check.\n");
               continue;
             }
           } else {
-            printf("Error: parameter 'direction' not obtained, please check.\n");
+            printf("Error: parameter 'forword' not obtained, please check.\n");
             continue;
           }
 
-          printf("Set all motors to speed %lld, direction %s .\n", speed, direction ? "FORWARD" : "REVERSE");
+          printf("Set all motors to speed: %lld, direction: %s .\n", speed, forword ? "FORWARD" : "REVERSE");
 
-          for (uint32_t i = 1; i <= sizeof(kMotorPins) / sizeof(kMotorPins[0]); i++) {
-            SetMotorDirectionSpeed(i - 1, direction, speed);
+          for (uint32_t i = 1; i <= kMotorPins.size(); i++) {
+            SetMotorDirectionSpeed(i - 1, forword, speed);
             std::string property_speed_name = "speed_" + std::to_string(i);
-            std::string property_direction_name = "direction_" + std::to_string(i);
+            std::string property_forword_name = "forword_" + std::to_string(i);
             g_motor_driver_iot_entity->UpdateState(std::move(property_speed_name), speed);
-            g_motor_driver_iot_entity->UpdateState(std::move(property_direction_name), direction);
+            g_motor_driver_iot_entity->UpdateState(std::move(property_forword_name), forword);
           }
         } else if (iot_message_event->function == "SetOneMotor") {  // Operate motor A
           int64_t speed = 0;
-          bool direction = kForword;
+          bool forword = true;
           int64_t index = 1;
 
           if (const auto it = iot_message_event->parameters.find("speed"); it != iot_message_event->parameters.end()) {
@@ -441,16 +439,16 @@ void loop() {
             continue;
           }
 
-          if (const auto it = iot_message_event->parameters.find("direction"); it != iot_message_event->parameters.end()) {
+          if (const auto it = iot_message_event->parameters.find("forword"); it != iot_message_event->parameters.end()) {
             if (std::get_if<bool>(&it->second)) {
-              direction = std::get<bool>(it->second);
+              forword = std::get<bool>(it->second);
 
             } else {
-              printf("Error: motor direction acquisition failed, please check.\n");
+              printf("Error: motor forword acquisition failed, please check.\n");
               continue;
             }
           } else {
-            printf("Error: parameter 'direction' not obtained, please check.\n");
+            printf("Error: parameter 'forword' not obtained, please check.\n");
             continue;
           }
 
@@ -458,8 +456,8 @@ void loop() {
             if (std::get_if<int64_t>(&it->second)) {
               index = std::get<int64_t>(it->second);
 
-              if (index < 1 || index > sizeof(kMotorPins) / sizeof(kMotorPins[0])) {
-                printf("Error: motor number is out of range (1-%d), got: %lld .\n", sizeof(kMotorPins) / sizeof(kMotorPins[0]), index);
+              if (index < 1 || index > kMotorPins.size()) {
+                printf("Error: motor number is out of range (1-%d), got: %lld .\n", kMotorPins.size(), index);
                 continue;
               }
             } else {
@@ -471,13 +469,13 @@ void loop() {
             continue;
           }
 
-          printf("Set motor %lld to speed: %lld, direction: %s .\n", index, speed, direction ? "FORWARD" : "REVERSE");
+          printf("Set motor %lld to speed: %lld, direction: %s .\n", index, speed, forword ? "FORWARD" : "REVERSE");
 
-          SetMotorDirectionSpeed(index - 1, direction, speed);
+          SetMotorDirectionSpeed(index - 1, forword, speed);
           std::string property_speed_name = "speed_" + std::to_string(index);
-          std::string property_direction_name = "direction_" + std::to_string(index);
+          std::string property_forword_name = "forword_" + std::to_string(index);
           g_motor_driver_iot_entity->UpdateState(std::move(property_speed_name), speed);
-          g_motor_driver_iot_entity->UpdateState(std::move(property_direction_name), direction);
+          g_motor_driver_iot_entity->UpdateState(std::move(property_forword_name), forword);
         }
       }
     }
