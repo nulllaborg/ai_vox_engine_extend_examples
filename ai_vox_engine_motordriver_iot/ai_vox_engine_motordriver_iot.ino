@@ -199,8 +199,8 @@ void SetMotorDirectionSpeed(const int64_t motor_index, const bool forword, const
     analogWrite(kMotorPins[motor_index].first, speed);
     digitalWrite(kMotorPins[motor_index].second, LOW);
   } else {
-    analogWrite(kMotorPins[motor_index].first, LOW);
-    digitalWrite(kMotorPins[motor_index].second, speed);
+    digitalWrite(kMotorPins[motor_index].first, LOW);
+    analogWrite(kMotorPins[motor_index].second, speed);
   }
 }
 
