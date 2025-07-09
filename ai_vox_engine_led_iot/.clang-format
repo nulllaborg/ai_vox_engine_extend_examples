@@ -1,6 +1,6 @@
 BasedOnStyle: Google
 
-ColumnLimit: 128
+ColumnLimit: 150
 
 AllowShortFunctionsOnASingleLine: None
 
