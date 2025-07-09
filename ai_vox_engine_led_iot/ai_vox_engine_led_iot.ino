@@ -113,8 +113,7 @@ void InitDisplay() {
   esp_lcd_panel_swap_xy(panel, kDisplaySwapXY);
   esp_lcd_panel_mirror(panel, kDisplayMirrorX, kDisplayMirrorY);
 
-  g_display = std::make_unique<Display>(
-      panel_io, panel, kDisplayWidth, kDisplayHeight, 0, 0, kDisplayMirrorX, kDisplayMirrorY, kDisplaySwapXY);
+  g_display = std::make_unique<Display>(panel_io, panel, kDisplayWidth, kDisplayHeight, 0, 0, kDisplayMirrorX, kDisplayMirrorY, kDisplaySwapXY);
   g_display->Start();
 }
 
