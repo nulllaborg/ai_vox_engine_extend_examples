@@ -1,0 +1,1 @@
+- fno - exceptions - Wall - Werror - DLV_LVGL_H_INCLUDE_SIMPLE
