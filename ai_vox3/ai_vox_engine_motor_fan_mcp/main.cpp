@@ -114,6 +114,8 @@ uint16_t g_swing_min_angle = 0;
 uint16_t g_swing_max_angle = 180;
 bool g_swing_forward = true;
 
+uint8_t g_display_brightness = 255;
+
 void InitI2cBus() {
   const i2c_master_bus_config_t i2c_master_bus_config = {
       .i2c_port = kI2CPort,
@@ -150,12 +152,12 @@ void InitDisplay() {
   printf("init display\n");
 
   if (!ledcAttachChannel(kLcdBacklightPin, kCommonPwmFrequency, kCommonPwmResolution, kLcdBacklightChannel)) {
-    printf("Error: Failed to attach LCD backlight LEDC channel\n");
+    printf("Error: Failed to attach LCD backlight LEDC channel.\n");
     return;
   }
 
-  if (!ledcWriteChannel(kLcdBacklightChannel, 255)) {
-    printf("Error: Failed to set LCD backlight brightness\n");
+  if (!ledcWriteChannel(kLcdBacklightChannel, g_display_brightness)) {
+    printf("Error: Failed to set LCD backlight brightness.\n");
     return;
   }
 
@@ -397,8 +399,8 @@ void InitMcpTools() {
                     }  // parameter schema
   );
 
-  engine.AddMcpTool("self.motor_fan.set_speed",                      // tool name
-                    "Set the speed and direction of the motor fan",  // tool description
+  engine.AddMcpTool("self.motor_fan.set_speed",                       // tool name
+                    "Set the speed and direction of the motor fan.",  // tool description
                     {
                         {
                             "speed",
@@ -418,8 +420,8 @@ void InitMcpTools() {
                     }  // parameter schema
   );
 
-  engine.AddMcpTool("self.motor_fan.set_swing_state",                                    // tool name
-                    "Set the swing state of the motor fan, true for on, false for off",  // tool description
+  engine.AddMcpTool("self.motor_fan.set_swing_state",                                     // tool name
+                    "Set the swing state of the motor fan, true for on, false for off.",  // tool description
                     {
                         {
                             "state",
@@ -475,6 +477,28 @@ void InitMcpTools() {
                         // empty
                     }  // parameter schema
   );
+
+  engine.AddMcpTool("self.display.set_brightness",         // tool name
+                    "Set the brightness of the display.",  // tool description
+                    {
+                        {
+                            "brightness",
+                            ai_vox::ParamSchema<int64_t>{
+                                .default_value = std::nullopt,
+                                .min = 0,
+                                .max = 255,
+                            },
+                        },
+                        // add more parameter schema as needed
+                    }  // parameter schema
+  );
+
+  engine.AddMcpTool("self.display.get_brightness",                 // tool name
+                    "Get the current brightness of the display.",  // tool description
+                    {
+                        // empty
+                    }  // parameter schema
+  );
 }
 
 uint32_t CalculateDuty(const uint16_t angle) {
@@ -491,27 +515,25 @@ bool SetFanSpeed(const uint8_t speed, const bool forward) {
 
   if (forward) {
     if (!ledcWriteChannel(kMotorInAChannel, speed)) {
-      printf("Error: Failed to set motor INA duty\n");
+      printf("Error: Failed to set motor INA duty.\n");
       return false;
     }
     if (!ledcWriteChannel(kMotorInBChannel, 0)) {
-      printf("Error: Failed to set motor INB duty\n");
+      printf("Error: Failed to set motor INB duty.\n");
       return false;
     }
   } else {
     if (!ledcWriteChannel(kMotorInAChannel, 0)) {
-      printf("Error: Failed to set motor INA duty\n");
+      printf("Error: Failed to set motor INA duty.\n");
       return false;
     }
     if (!ledcWriteChannel(kMotorInBChannel, speed)) {
-      printf("Error: Failed to set motor INB duty\n");
+      printf("Error: Failed to set motor INB duty.\n");
       return false;
     }
   }
 
   g_fan_speed = speed;
-  printf("Fan speed set to: %d\n", speed);
-
   return true;
 }
 
@@ -519,18 +541,18 @@ void InitMotor() {
   printf("init motor\n");
 
   if (!ledcAttachChannel(kMotorInA, kCommonPwmFrequency, kCommonPwmResolution, kMotorInAChannel)) {
-    printf("Error: Failed to attach motor INA LEDC channel\n");
+    printf("Error: Failed to attach motor INA LEDC channel.\n");
   } else {
     if (!ledcWriteChannel(kMotorInAChannel, 0)) {
-      printf("Error: Failed to set motor INA initial duty\n");
+      printf("Error: Failed to set motor INA initial duty.\n");
     }
   }
 
   if (!ledcAttachChannel(kMotorInB, kCommonPwmFrequency, kCommonPwmResolution, kMotorInBChannel)) {
-    printf("Error: Failed to attach motor INB LEDC channel\n");
+    printf("Error: Failed to attach motor INB LEDC channel.\n");
   } else {
     if (!ledcWriteChannel(kMotorInBChannel, 0)) {
-      printf("Error: Failed to set motor INB initial duty\n");
+      printf("Error: Failed to set motor INB initial duty.\n");
     }
   }
   g_fan_speed = 0;
@@ -540,12 +562,12 @@ void InitServo() {
   printf("init servo\n");
 
   if (!ledcAttachChannel(kServoPin, kServoFrequency, kServoResolution, kServoChannel)) {
-    printf("Error: Failed to attach servo LEDC channel!\n");
+    printf("Error: Failed to attach servo LEDC channel.\n");
     return;
   }
 
   if (!ledcWriteChannel(kServoChannel, CalculateDuty(g_servo_angle))) {
-    printf("Error: Failed to set initial servo duty!\n");
+    printf("Error: Failed to set initial servo duty.\n");
   }
 }
 
@@ -633,7 +655,7 @@ void loop() {
       const uint16_t next_servo_angle = g_swing_forward ? g_servo_angle + 1 : g_servo_angle - 1;
 
       if (!ledcWriteChannel(kServoChannel, CalculateDuty(next_servo_angle))) {
-        printf("Error: Failed to update servo angle in swing loop\n");
+        printf("Error: Failed to update servo angle in swing loop.\n");
       } else {
         g_servo_angle = next_servo_angle;
       }
@@ -846,8 +868,30 @@ void loop() {
         cJSON_AddNumberToObject(status.get(), "swing_max_angle", g_swing_max_angle);
 
         const std::string status_json = cjson_util::ToString(status, false);
-        printf("on mcp tool call: self.motor_fan.get_status,status: %s\n", status_json.c_str());
+        printf("on mcp tool call: self.motor_fan.get_status, status: %s\n", status_json.c_str());
         engine.SendMcpCallResponse(mcp_tool_call_event->id, std::move(status_json));
+
+      } else if ("self.display.set_brightness" == mcp_tool_call_event->name) {
+        const auto brightness_ptr = mcp_tool_call_event->param<int64_t>("brightness");
+        if (brightness_ptr == nullptr) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Missing valid argument: brightness");
+          continue;
+        }
+        if (*brightness_ptr < 0 || *brightness_ptr > 255) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid brightness value, must be between 0 and 255");
+          continue;
+        }
+        printf("on mcp tool call: self.display.set_brightness, brightness: %" PRId64 "\n", *brightness_ptr);
+        if (ledcWriteChannel(kLcdBacklightChannel, *brightness_ptr)) {
+          g_display_brightness = static_cast<uint8_t>(*brightness_ptr);
+          engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
+        } else {
+          engine.SendMcpCallResponse(mcp_tool_call_event->id, "Failed to set LCD backlight brightness");
+        }
+
+      } else if ("self.display.get_brightness" == mcp_tool_call_event->name) {
+        printf("on mcp tool call: self.display.get_brightness, brightness: %" PRIu8 "\n", g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, static_cast<int64_t>(g_display_brightness));
       }
     }
   }

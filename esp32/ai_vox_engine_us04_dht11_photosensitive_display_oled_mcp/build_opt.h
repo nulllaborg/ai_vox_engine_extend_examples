@@ -1,1 +1,1 @@
-- fno - exceptions - Wall - Werror
+-fno-exceptions -Wall -Werror
