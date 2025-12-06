@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <Wire.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 #include <esp_heap_caps.h>
@@ -62,11 +63,6 @@ constexpr gpio_num_t kEs8311Asdout = GPIO_NUM_9;  // ES8311 ADC serial data outp
 constexpr gpio_num_t kI2cScl = GPIO_NUM_12;  // ES8311 CCLK
 constexpr gpio_num_t kI2cSda = GPIO_NUM_13;  // ES8311 CDATA
 
-const std::vector<std::pair<gpio_num_t, gpio_num_t>> kMotorPins = {
-    {GPIO_NUM_3, GPIO_NUM_4},  // One element represents a motor: (IN1, IN2)
-    {GPIO_NUM_42, GPIO_NUM_44},
-};
-
 constexpr i2c_port_t kI2CPort = I2C_NUM_1;
 
 constexpr auto kDisplaySpiMode = 0;
@@ -81,13 +77,26 @@ constexpr auto kDisplayRgbElementOrder = LCD_RGB_ELEMENT_ORDER_RGB;
 constexpr uint8_t kEs8311I2cAddress = 0x30;
 constexpr uint32_t kAudioSampleRate = 16000;
 
-std::vector<std::pair<uint8_t, bool>> g_motor_states(kMotorPins.size(), {0, true});  // Initial state of motor: speed, direction
-
 i2c_master_bus_handle_t g_i2c_master_bus_handle = nullptr;
 std::shared_ptr<ai_vox::AudioDeviceEs8311> g_audio_device_es8311;
 std::unique_ptr<Display> g_display;
 auto g_observer = std::make_shared<ai_vox::Observer>();
 button_handle_t g_button_boot_handle = nullptr;
+
+constexpr uint8_t kI2cEndTransmissionSuccess = 0;
+
+constexpr uint8_t kMd40Address = 0x16;
+constexpr uint8_t kMotorNum = 4;
+
+constexpr uint8_t kPwmDutyBase = 0x40;
+constexpr uint8_t kMotorStateOffset = 0x20;
+constexpr uint8_t kCommandExecute = 0x23;
+constexpr uint8_t kCommandType = 0x11;
+constexpr uint8_t kRunPwmDuty = 12;
+
+uint8_t g_display_brightness = 255;
+
+TwoWire g_motor_wire = TwoWire(2);
 
 void InitI2cBus() {
   const i2c_master_bus_config_t i2c_master_bus_config = {
@@ -124,7 +133,7 @@ void InitEs8311() {
 void InitDisplay() {
   printf("init display\n");
   pinMode(kLcdBacklightPin, OUTPUT);
-  analogWrite(kLcdBacklightPin, 255);
+  analogWrite(kLcdBacklightPin, g_display_brightness);
 
   //  https://docs.espressif.com/projects/esp-iot-solution/zh_CN/latest/display/lcd/spi_lcd.html#id4
   spi_bus_config_t buscfg{
@@ -373,7 +382,7 @@ void InitMcpTools() {
                             ai_vox::ParamSchema<int64_t>{
                                 .default_value = std::nullopt,
                                 .min = 1,
-                                .max = static_cast<int64_t>(kMotorPins.size()),
+                                .max = static_cast<int64_t>(kMotorNum),
                             },
                         },
                         {
@@ -402,7 +411,7 @@ void InitMcpTools() {
                             ai_vox::ParamSchema<int64_t>{
                                 .default_value = std::nullopt,
                                 .min = 1,
-                                .max = static_cast<int64_t>(kMotorPins.size()),
+                                .max = static_cast<int64_t>(kMotorNum),
                             },
                         },
                         {
@@ -410,7 +419,7 @@ void InitMcpTools() {
                             ai_vox::ParamSchema<int64_t>{
                                 .default_value = std::nullopt,
                                 .min = 1,
-                                .max = static_cast<int64_t>(kMotorPins.size()),
+                                .max = static_cast<int64_t>(kMotorNum),
                             },
                         },
                         {
@@ -439,7 +448,7 @@ void InitMcpTools() {
                             ai_vox::ParamSchema<int64_t>{
                                 .default_value = std::nullopt,
                                 .min = 1,
-                                .max = static_cast<int64_t>(kMotorPins.size()),
+                                .max = static_cast<int64_t>(kMotorNum),
                             },
                         },
                         // add more parameter schema as needed
@@ -454,7 +463,7 @@ void InitMcpTools() {
                             ai_vox::ParamSchema<int64_t>{
                                 .default_value = std::nullopt,
                                 .min = 1,
-                                .max = static_cast<int64_t>(kMotorPins.size()),
+                                .max = static_cast<int64_t>(kMotorNum),
                             },
                         },
                         {
@@ -462,74 +471,217 @@ void InitMcpTools() {
                             ai_vox::ParamSchema<int64_t>{
                                 .default_value = std::nullopt,
                                 .min = 1,
-                                .max = static_cast<int64_t>(kMotorPins.size()),
+                                .max = static_cast<int64_t>(kMotorNum),
                             },
                         },
                         // add more parameter schema as needed
                     }  // parameter schema
   );
+
+  engine.AddMcpTool("self.display.set_brightness",         // tool name
+                    "Set the brightness of the display.",  // tool description
+                    {
+                        {
+                            "brightness",
+                            ai_vox::ParamSchema<int64_t>{
+                                .default_value = std::nullopt,
+                                .min = 0,
+                                .max = 255,
+                            },
+                        },
+                        // add more parameter schema as needed
+                    }  // parameter schema
+  );
+
+  engine.AddMcpTool("self.display.get_brightness",                 // tool name
+                    "Get the current brightness of the display.",  // tool description
+                    {
+                        // empty
+                    }  // parameter schema
+  );
 }
 
-bool SetMotorDirectionSpeed(const uint8_t motor_index, const bool forward, const uint8_t speed) {
-  if (motor_index < 1 || motor_index > kMotorPins.size()) {
-    printf("Error: invalid motor index: %" PRIu8 ", valid range: 1-%" PRIu8 "\n", motor_index, kMotorPins.size());
-    return false;
-  }
+bool WaitCommandEmpty() {
+  uint8_t status = 0xFF;
+  do {
+    g_motor_wire.beginTransmission(kMd40Address);
+    g_motor_wire.write(kCommandExecute);
+    if (g_motor_wire.endTransmission() != kI2cEndTransmissionSuccess) {
+      printf("Error: I2C transmission error.\n");
+      return false;
+    }
 
-  if (forward) {
-    analogWrite(kMotorPins[motor_index - 1].first, speed);
-    analogWrite(kMotorPins[motor_index - 1].second, 0);
-  } else {
-    analogWrite(kMotorPins[motor_index - 1].first, 0);
-    analogWrite(kMotorPins[motor_index - 1].second, speed);
-  }
+    if (g_motor_wire.requestFrom(kMd40Address, static_cast<uint8_t>(sizeof(status))) != sizeof(status)) {
+      printf("Error: I2C request error.\n");
+      return false;
+    }
 
-  g_motor_states[motor_index - 1].first = speed;
-  g_motor_states[motor_index - 1].second = forward;
+    while (g_motor_wire.available() == 0);
+
+    status = g_motor_wire.read();
+
+  } while (status != 0);
 
   return true;
 }
 
+bool ExecuteCommand() {
+  g_motor_wire.beginTransmission(kMd40Address);
+  g_motor_wire.write(kCommandExecute);
+  g_motor_wire.write(0x01);
+  if (g_motor_wire.endTransmission() != kI2cEndTransmissionSuccess) {
+    printf("Error: I2C transmission error.\n");
+    return false;
+  }
+
+  return WaitCommandEmpty();
+}
+
+bool SetMotorDirectionSpeed(const uint8_t motor_index, const bool direction, const uint8_t speed) {
+  if (motor_index < 1 || motor_index > kMotorNum) {
+    printf("Error: Invalid motor index: %" PRIu8 ", valid range: 1-4 .\n", motor_index);
+    return false;
+  }
+
+  int16_t pwm_duty = map(speed, 0, 255, 0, 1023);
+  if (!direction) {
+    pwm_duty = -pwm_duty;
+  }
+
+  if (!WaitCommandEmpty()) {
+    printf("Error: Motor command queue is not empty.\n");
+    return false;
+  }
+
+  g_motor_wire.beginTransmission(kMd40Address);
+  g_motor_wire.write(kCommandType);
+  g_motor_wire.write(kRunPwmDuty);
+  g_motor_wire.write(static_cast<uint8_t>(motor_index - 1));
+  g_motor_wire.write(reinterpret_cast<const uint8_t*>(&pwm_duty), sizeof(pwm_duty));
+  if (g_motor_wire.endTransmission() != kI2cEndTransmissionSuccess) {
+    printf("Error: I2C transmission error.\n");
+    return false;
+  }
+
+  return ExecuteCommand();
+}
+
 void InitMotors() {
   printf("init motors\n");
-  for (uint8_t i = 0; i < kMotorPins.size(); i++) {
-    pinMode(kMotorPins[i].first, OUTPUT);
-    pinMode(kMotorPins[i].second, OUTPUT);
 
-    if (g_motor_states[i].second) {
-      analogWrite(kMotorPins[i].first, g_motor_states[i].first);
-      analogWrite(kMotorPins[i].second, 0);
-    } else {
-      analogWrite(kMotorPins[i].first, 0);
-      analogWrite(kMotorPins[i].second, g_motor_states[i].first);
+  g_motor_wire.begin(kI2cSda, kI2cScl);
+
+  for (uint8_t i = 0; i < kMotorNum; i++) {
+    if (!WaitCommandEmpty()) {
+      printf("Error: Motor init failed.");
+      return;
+    }
+
+    g_motor_wire.beginTransmission(kMd40Address);
+    g_motor_wire.write(kCommandType);
+    g_motor_wire.write(2);
+    g_motor_wire.write(i);
+    if (g_motor_wire.endTransmission() != kI2cEndTransmissionSuccess) {
+      printf("Error: I2C transmission error.\n");
+      return;
+    }
+
+    if (!ExecuteCommand()) {
+      printf("Error: Motor init failed.");
+      return;
+    }
+
+    g_motor_wire.beginTransmission(kMd40Address);
+    g_motor_wire.write(kCommandType);
+    g_motor_wire.write(1);
+    g_motor_wire.write(i);
+    g_motor_wire.write(0);
+    g_motor_wire.write(0);
+    g_motor_wire.write(0);
+    if (g_motor_wire.endTransmission() != kI2cEndTransmissionSuccess) {
+      printf("Error: I2C transmission error.\n");
+      return;
+    }
+
+    if (!ExecuteCommand()) {
+      printf("Error: Motor init failed.");
+      return;
+    }
+  }
+
+  for (uint8_t i = 1; i <= kMotorNum; i++) {
+    if (!SetMotorDirectionSpeed(i, true, 0)) {
+      printf("Error: Motor init failed.");
+      return;
     }
   }
 }
 
+int16_t GetMotorSpeed(const uint8_t motor_index) {
+  if (motor_index < 1 || motor_index > kMotorNum) {
+    printf("Error: Invalid motor index: %" PRIu8 ", valid range: 1-4 .\n", motor_index);
+    return 0;
+  }
+
+  const uint8_t address = kPwmDutyBase + (motor_index - 1) * kMotorStateOffset;
+
+  g_motor_wire.beginTransmission(kMd40Address);
+  g_motor_wire.write(address);
+  g_motor_wire.write(0);
+  if (g_motor_wire.endTransmission() != kI2cEndTransmissionSuccess) {
+    printf("Error: I2C transmission error.\n");
+    return 0;
+  }
+
+  g_motor_wire.beginTransmission(kMd40Address);
+  g_motor_wire.write(address);
+  if (g_motor_wire.endTransmission() != kI2cEndTransmissionSuccess) {
+    printf("Error: I2C transmission error.\n");
+    return 0;
+  }
+
+  int16_t data = 0;
+  if (g_motor_wire.requestFrom(kMd40Address, static_cast<uint8_t>(sizeof(data))) != sizeof(data)) {
+    printf("Error: I2C request error during reading PWM duty.\n");
+    return 0;
+  }
+
+  uint8_t offset = 0;
+  while (offset < sizeof(data)) {
+    if (g_motor_wire.available()) {
+      reinterpret_cast<uint8_t*>(&data)[offset++] = g_motor_wire.read();
+    }
+  }
+
+  return map(data, -1023, 1023, -255, 255);
+}
+
 std::string GetMotorRangeStatesJson(const uint8_t start_index, const uint8_t end_index) {
-  if (start_index < 1 || start_index > kMotorPins.size()) {
-    printf("Error: invalid start_index: %" PRIu8 ", valid range: 1-%" PRIu8 "\n", start_index, kMotorPins.size());
+  if (start_index < 1 || start_index > kMotorNum) {
+    printf("Error: Invalid start_index: %" PRIu8 ", valid range: 1-%" PRIu8 " .\n", start_index, kMotorNum);
     return "[]";
   }
 
-  if (end_index < 1 || end_index > kMotorPins.size()) {
-    printf("Error: invalid end_index: %" PRIu8 ", valid range: 1-%" PRIu8 "\n", end_index, kMotorPins.size());
+  if (end_index < 1 || end_index > kMotorNum) {
+    printf("Error: Invalid end_index: %" PRIu8 ", valid range: 1-%" PRIu8 " .\n", end_index, kMotorNum);
     return "[]";
   }
 
   if (start_index > end_index) {
-    printf("Error: start_index (%" PRIu8 ") cannot be greater than end_index (%" PRIu8 ")\n", start_index, end_index);
+    printf("Error: Start_index (%" PRIu8 ") cannot be greater than end_index (%" PRIu8 ") .\n", start_index, end_index);
     return "[]";
   }
 
   auto motor_states = cjson_util::ArrayMakeUnique();
 
   for (uint8_t i = start_index; i <= end_index; i++) {
+    const int16_t speed = GetMotorSpeed(i);
+
     auto motor_state = cjson_util::MakeUnique();
 
     cJSON_AddNumberToObject(motor_state.get(), "index", i);
-    cJSON_AddNumberToObject(motor_state.get(), "speed", g_motor_states[i - 1].first);
-    cJSON_AddNumberToObject(motor_state.get(), "forward", g_motor_states[i - 1].second);
+    cJSON_AddNumberToObject(motor_state.get(), "speed", speed);
+    cJSON_AddNumberToObject(motor_state.get(), "forward", speed >= 0 ? true : false);
     cJSON_AddItemToArray(motor_states.get(), motor_state.release());
   }
 
@@ -693,6 +845,7 @@ void loop() {
           engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid volume value, volume must be between 0 and 100");
           continue;
         }
+
         printf("on mcp tool call: self.audio_speaker.set_volume, volume: %" PRId64 "\n", *volume_ptr);
         g_audio_device_es8311->set_volume(static_cast<uint16_t>(*volume_ptr));
         engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
@@ -708,8 +861,8 @@ void loop() {
           engine.SendMcpCallError(mcp_tool_call_event->id, "Missing required argument: index");
           continue;
         }
-        if (*index_ptr < 1 || *index_ptr > kMotorPins.size()) {
-          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid index value, index must be between 1 and " + std::to_string(kMotorPins.size()));
+        if (*index_ptr < 1 || *index_ptr > kMotorNum) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid index value, index must be between 1 and " + std::to_string(kMotorNum));
           continue;
         }
 
@@ -746,9 +899,9 @@ void loop() {
           engine.SendMcpCallError(mcp_tool_call_event->id, "Missing required argument: start_index");
           continue;
         }
-        if (*start_index_ptr < 1 || *start_index_ptr > kMotorPins.size()) {
+        if (*start_index_ptr < 1 || *start_index_ptr > kMotorNum) {
           engine.SendMcpCallError(mcp_tool_call_event->id,
-                                  "Invalid start_index value, start_index must be between 1 and " + std::to_string(kMotorPins.size()));
+                                  "Invalid start_index value, start_index must be between 1 and " + std::to_string(kMotorNum));
           continue;
         }
 
@@ -757,9 +910,8 @@ void loop() {
           engine.SendMcpCallError(mcp_tool_call_event->id, "Missing required argument: end_index");
           continue;
         }
-        if (*end_index_ptr < 1 || *end_index_ptr > kMotorPins.size()) {
-          engine.SendMcpCallError(mcp_tool_call_event->id,
-                                  "Invalid end_index value, end_index must be between 1 and " + std::to_string(kMotorPins.size()));
+        if (*end_index_ptr < 1 || *end_index_ptr > kMotorNum) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid end_index value, end_index must be between 1 and " + std::to_string(kMotorNum));
           continue;
         }
 
@@ -807,8 +959,8 @@ void loop() {
           engine.SendMcpCallError(mcp_tool_call_event->id, "Missing required argument: index");
           continue;
         }
-        if (*index_ptr < 1 || *index_ptr > kMotorPins.size()) {
-          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid index value, index must be between 1 and " + std::to_string(kMotorPins.size()));
+        if (*index_ptr < 1 || *index_ptr > kMotorNum) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid index value, index must be between 1 and " + std::to_string(kMotorNum));
           continue;
         }
 
@@ -822,9 +974,9 @@ void loop() {
           engine.SendMcpCallError(mcp_tool_call_event->id, "Missing required argument: start_index");
           continue;
         }
-        if (*start_index_ptr < 1 || *start_index_ptr > kMotorPins.size()) {
+        if (*start_index_ptr < 1 || *start_index_ptr > kMotorNum) {
           engine.SendMcpCallError(mcp_tool_call_event->id,
-                                  "Invalid start_index value, start_index must be between 1 and " + std::to_string(kMotorPins.size()));
+                                  "Invalid start_index value, start_index must be between 1 and " + std::to_string(kMotorNum));
           continue;
         }
 
@@ -833,9 +985,8 @@ void loop() {
           engine.SendMcpCallError(mcp_tool_call_event->id, "Missing required argument: end_index");
           continue;
         }
-        if (*end_index_ptr < 1 || *end_index_ptr > kMotorPins.size()) {
-          engine.SendMcpCallError(mcp_tool_call_event->id,
-                                  "Invalid end_index value, end_index must be between 1 and " + std::to_string(kMotorPins.size()));
+        if (*end_index_ptr < 1 || *end_index_ptr > kMotorNum) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid end_index value, end_index must be between 1 and " + std::to_string(kMotorNum));
           continue;
         }
 
@@ -847,6 +998,26 @@ void loop() {
         const std::string states_json = GetMotorRangeStatesJson(static_cast<uint8_t>(*start_index_ptr), static_cast<uint8_t>(*end_index_ptr));
         printf("on mcp tool call: self.motor.get_range_motor_states, states: %s\n", states_json.c_str());
         engine.SendMcpCallResponse(mcp_tool_call_event->id, std::move(states_json));
+
+      } else if ("self.display.set_brightness" == mcp_tool_call_event->name) {
+        const auto brightness_ptr = mcp_tool_call_event->param<int64_t>("brightness");
+        if (brightness_ptr == nullptr) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Missing valid argument: brightness");
+          continue;
+        }
+        if (*brightness_ptr < 0 || *brightness_ptr > 255) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid brightness value, must be between 0 and 255");
+          continue;
+        }
+
+        printf("on mcp tool call: self.display.set_brightness, brightness: %" PRId64 "\n", *brightness_ptr);
+        g_display_brightness = static_cast<uint8_t>(*brightness_ptr);
+        analogWrite(kLcdBacklightPin, g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
+
+      } else if ("self.display.get_brightness" == mcp_tool_call_event->name) {
+        printf("on mcp tool call: self.display.get_brightness, brightness: %" PRIu8 "\n", g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, static_cast<int64_t>(g_display_brightness));
       }
     }
   }

@@ -83,10 +83,12 @@ constexpr uint8_t kWs2812bRgbLedNum = 12;  // Led nums
 
 CRGB g_ws2812b_rgb_leds[kWs2812bRgbLedNum];
 
+uint8_t g_display_brightness = 255;
+
 void InitDisplay() {
   printf("init display\n");
   pinMode(kDisplayBacklightPin, OUTPUT);
-  analogWrite(kDisplayBacklightPin, 255);
+  analogWrite(kDisplayBacklightPin, g_display_brightness);
 
   spi_bus_config_t buscfg{
       .mosi_io_num = kDisplayMosiPin,
@@ -465,6 +467,28 @@ void InitMcpTools() {
                         // empty
                     }  // parameter schema
   );
+
+  engine.AddMcpTool("self.display.set_brightness",         // tool name
+                    "Set the brightness of the display.",  // tool description
+                    {
+                        {
+                            "brightness",
+                            ai_vox::ParamSchema<int64_t>{
+                                .default_value = std::nullopt,
+                                .min = 0,
+                                .max = 255,
+                            },
+                        },
+                        // add more parameter schema as needed
+                    }  // parameter schema
+  );
+
+  engine.AddMcpTool("self.display.get_brightness",                 // tool name
+                    "Get the current brightness of the display.",  // tool description
+                    {
+                        // empty
+                    }  // parameter schema
+  );
 }
 
 void InitWs2812bRgb() {
@@ -477,17 +501,17 @@ void InitWs2812bRgb() {
 
 std::string GetLedRangeColorsJson(const uint8_t start_index, const uint8_t end_index) {
   if (start_index < 1 || start_index > kWs2812bRgbLedNum) {
-    printf("Error: invalid start_index: %" PRIu8 ", valid range: 1-%" PRIu8 "\n", start_index, kWs2812bRgbLedNum);
+    printf("Error: Invalid start_index: %" PRIu8 ", valid range: 1-%" PRIu8 " .\n", start_index, kWs2812bRgbLedNum);
     return "[]";
   }
 
   if (end_index < 1 || end_index > kWs2812bRgbLedNum) {
-    printf("Error: invalid end_index: %" PRIu8 ", valid range: 1-%" PRIu8 "\n", end_index, kWs2812bRgbLedNum);
+    printf("Error: Invalid end_index: %" PRIu8 ", valid range: 1-%" PRIu8 " .\n", end_index, kWs2812bRgbLedNum);
     return "[]";
   }
 
   if (start_index > end_index) {
-    printf("Error: start_index (%" PRIu8 ") cannot be greater than end_index (%" PRIu8 ")\n", start_index, end_index);
+    printf("Error: Start_index (%" PRIu8 ") cannot be greater than end_index (%" PRIu8 ") .\n", start_index, end_index);
     return "[]";
   }
 
@@ -863,6 +887,26 @@ void loop() {
         const auto brightness = FastLED.getBrightness();
         printf("on mcp tool call: self.ws2812b.get_brightness, brightness: %" PRIu8 "\n", brightness);
         engine.SendMcpCallResponse(mcp_tool_call_event->id, static_cast<int64_t>(brightness));
+
+      } else if ("self.display.set_brightness" == mcp_tool_call_event->name) {
+        const auto brightness_ptr = mcp_tool_call_event->param<int64_t>("brightness");
+        if (brightness_ptr == nullptr) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Missing valid argument: brightness");
+          continue;
+        }
+        if (*brightness_ptr < 0 || *brightness_ptr > 255) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid brightness value, must be between 0 and 255");
+          continue;
+        }
+
+        printf("on mcp tool call: self.display.set_brightness, brightness: %" PRId64 "\n", *brightness_ptr);
+        g_display_brightness = static_cast<uint8_t>(*brightness_ptr);
+        analogWrite(kDisplayBacklightPin, g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
+
+      } else if ("self.display.get_brightness" == mcp_tool_call_event->name) {
+        printf("on mcp tool call: self.display.get_brightness, brightness: %" PRIu8 "\n", g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, static_cast<int64_t>(g_display_brightness));
       }
     }
   }

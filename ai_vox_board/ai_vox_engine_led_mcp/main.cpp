@@ -77,10 +77,12 @@ button_handle_t g_button_boot_handle = nullptr;
 std::unique_ptr<Display> g_display;
 auto g_observer = std::make_shared<ai_vox::Observer>();
 
+uint8_t g_display_brightness = 255;
+
 void InitDisplay() {
   printf("init display\n");
   pinMode(kDisplayBacklightPin, OUTPUT);
-  analogWrite(kDisplayBacklightPin, 255);
+  analogWrite(kDisplayBacklightPin, g_display_brightness);
 
   spi_bus_config_t buscfg{
       .mosi_io_num = kDisplayMosiPin,
@@ -333,6 +335,28 @@ void InitMcpTools() {
                         // empty
                     }  // parameter schema
   );
+
+  engine.AddMcpTool("self.display.set_brightness",         // tool name
+                    "Set the brightness of the display.",  // tool description
+                    {
+                        {
+                            "brightness",
+                            ai_vox::ParamSchema<int64_t>{
+                                .default_value = std::nullopt,
+                                .min = 0,
+                                .max = 255,
+                            },
+                        },
+                        // add more parameter schema as needed
+                    }  // parameter schema
+  );
+
+  engine.AddMcpTool("self.display.get_brightness",                 // tool name
+                    "Get the current brightness of the display.",  // tool description
+                    {
+                        // empty
+                    }  // parameter schema
+  );
 }
 }  // namespace
 
@@ -518,6 +542,26 @@ void loop() {
       } else if ("self.led.get" == mcp_tool_call_event->name) {
         printf("on mcp tool call: self.led.get, state: %s\n", digitalRead(kLedPin) == HIGH ? "HIGH" : "LOW");
         engine.SendMcpCallResponse(mcp_tool_call_event->id, digitalRead(kLedPin) == HIGH);
+
+      } else if ("self.display.set_brightness" == mcp_tool_call_event->name) {
+        const auto brightness_ptr = mcp_tool_call_event->param<int64_t>("brightness");
+        if (brightness_ptr == nullptr) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Missing valid argument: brightness");
+          continue;
+        }
+        if (*brightness_ptr < 0 || *brightness_ptr > 255) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid brightness value, must be between 0 and 255");
+          continue;
+        }
+
+        printf("on mcp tool call: self.display.set_brightness, brightness: %" PRId64 "\n", *brightness_ptr);
+        g_display_brightness = static_cast<uint8_t>(*brightness_ptr);
+        analogWrite(kDisplayBacklightPin, g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
+
+      } else if ("self.display.get_brightness" == mcp_tool_call_event->name) {
+        printf("on mcp tool call: self.display.get_brightness, brightness: %" PRIu8 "\n", g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, static_cast<int64_t>(g_display_brightness));
       }
     }
   }
