@@ -93,16 +93,18 @@ constexpr uint8_t kDisplayBacklightResolution = 8;
 
 std::vector<uint16_t> g_servo_angles(kServoPins.size(), 90);
 
+uint8_t g_display_brightness = 255;
+
 void InitDisplay() {
   printf("init display\n");
 
-  if (!ledcAttach(kDisplayBacklightPin, kDisplayBacklightFrequency, kDisplayBacklightResolution)) {
-    printf("Error: Failed to attach display backlight on pin %d\n", kDisplayBacklightPin);
+  if (!ledcAttachChannel(kDisplayBacklightPin, kDisplayBacklightFrequency, kDisplayBacklightResolution, kDisplayBacklightChannel)) {
+    printf("Error: Failed to attach LCD backlight LEDC channel.\n");
     return;
   }
 
-  if (!ledcWrite(kDisplayBacklightPin, 255)) {
-    printf("Error: Failed to set display backlight brightness\n");
+  if (!ledcWriteChannel(kDisplayBacklightChannel, g_display_brightness)) {
+    printf("Error: Failed to set LCD backlight brightness.\n");
     return;
   }
 
@@ -427,6 +429,28 @@ void InitMcpTools() {
                         },
                     }  // parameter schema
   );
+
+  engine.AddMcpTool("self.display.set_brightness",         // tool name
+                    "Set the brightness of the display.",  // tool description
+                    {
+                        {
+                            "brightness",
+                            ai_vox::ParamSchema<int64_t>{
+                                .default_value = std::nullopt,
+                                .min = 0,
+                                .max = 255,
+                            },
+                        },
+                        // add more parameter schema as needed
+                    }  // parameter schema
+  );
+
+  engine.AddMcpTool("self.display.get_brightness",                 // tool name
+                    "Get the current brightness of the display.",  // tool description
+                    {
+                        // empty
+                    }  // parameter schema
+  );
 }
 
 uint32_t CalculateDuty(const uint16_t angle) {
@@ -440,12 +464,12 @@ void InitServos() {
 
   for (uint8_t i = 0; i < kServoPins.size(); i++) {
     if (!ledcAttach(kServoPins[i], kServoFrequency, kServoResolution)) {
-      printf("Error: Failed to attach servo %d on pin %d\n", i, kServoPins[i]);
+      printf("Error: Failed to attach servo %" PRIu8 " on pin %" PRIu8 " .\n", i, kServoPins[i]);
       continue;
     }
 
     if (!ledcWrite(kServoPins[i], CalculateDuty(g_servo_angles[i]))) {
-      printf("Error: Failed to set initial duty for servo %d\n", i);
+      printf("Error: Failed to set initial duty for servo %" PRIu8 " .\n", i);
       continue;
     }
   }
@@ -453,17 +477,17 @@ void InitServos() {
 
 bool SetServoAngle(const uint8_t servo_index, const uint16_t angle) {
   if (servo_index < 1 || servo_index > kServoPins.size()) {
-    printf("Error: Invalid servo index: %" PRIu8 ", valid range: 1-%" PRIu8 "\n", servo_index, kServoPins.size());
+    printf("Error: Invalid servo index: %" PRIu8 ", valid range: 1-%" PRIu8 " .\n", servo_index, kServoPins.size());
     return false;
   }
 
   if (angle > kMaxServoAngle) {
-    printf("Error: Invalid servo angle: %" PRIu16 " for index: %" PRIu8 "\n", angle, servo_index);
+    printf("Error: Invalid servo angle: %" PRIu16 " for index: %" PRIu8 " .\n", angle, servo_index);
     return false;
   }
 
   if (!ledcWrite(kServoPins[servo_index - 1], CalculateDuty(angle))) {
-    printf("Error: Failed to write duty for servo %" PRIu8 "\n", servo_index);
+    printf("Error: Failed to write duty for servo %" PRIu8 " .\n", servo_index);
     return false;
   }
   g_servo_angles[servo_index - 1] = angle;
@@ -776,6 +800,29 @@ void loop() {
         const std::string servo_angles_json = cjson_util::ToString(servo_angles, false);
         printf("on mcp tool call: self.servo.get_range_servo_angles, angles: %s\n", servo_angles_json.c_str());
         engine.SendMcpCallResponse(mcp_tool_call_event->id, std::move(servo_angles_json));
+
+      } else if ("self.display.set_brightness" == mcp_tool_call_event->name) {
+        const auto brightness_ptr = mcp_tool_call_event->param<int64_t>("brightness");
+        if (brightness_ptr == nullptr) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Missing valid argument: brightness");
+          continue;
+        }
+        if (*brightness_ptr < 0 || *brightness_ptr > 255) {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Invalid brightness value, must be between 0 and 255");
+          continue;
+        }
+
+        printf("on mcp tool call: self.display.set_brightness, brightness: %" PRId64 "\n", *brightness_ptr);
+        if (ledcWriteChannel(kDisplayBacklightChannel, *brightness_ptr)) {
+          g_display_brightness = static_cast<uint8_t>(*brightness_ptr);
+          engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
+        } else {
+          engine.SendMcpCallError(mcp_tool_call_event->id, "Failed to set display brightness");
+        }
+
+      } else if ("self.display.get_brightness" == mcp_tool_call_event->name) {
+        printf("on mcp tool call: self.display.get_brightness, brightness: %" PRIu8 "\n", g_display_brightness);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, static_cast<int64_t>(g_display_brightness));
       }
     }
   }
