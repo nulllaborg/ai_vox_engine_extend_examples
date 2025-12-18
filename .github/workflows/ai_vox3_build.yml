@@ -1,4 +1,4 @@
-name: Arduino ESP32 Build
+name: AI VOX3 Build
 
 on:
   push:
@@ -17,7 +17,10 @@ jobs:
       AI_VOX_VERSION: "v1.3.0"
     strategy:
       matrix:
-        example: ["esp32/ai_vox_engine_us04_dht11_photosensitive_display_lcd_mcp", "esp32/ai_vox_engine_us04_dht11_photosensitive_display_oled_mcp"]
+        example: ["ai_vox3/ai_vox_engine_dht11_servo_led_mcp","ai_vox3/ai_vox_engine_led_mcp","ai_vox3/ai_vox_engine_motor_fan_mcp","ai_vox3/ai_vox_engine_motordriver_mcp",
+                  "ai_vox3/ai_vox_engine_servo_mcp","ai_vox3/ai_vox_engine_us04_dht11_photosensitive_mcp","ai_vox3/ai_vox_engine_ws2812b_mcp"]
+        core_version: ["3.2.0"]
+        fqbn: ["esp32:esp32:esp32s3"]
 
     steps:
       - name: Checkout examples repository
@@ -40,13 +43,17 @@ jobs:
           ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} config set directories.user ${ARDUINO_USER_DIR}
           ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} config set library.enable_unsafe_install true
           ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} config dump
-          ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} core install esp32:esp32@3.2.0
+          ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} core install esp32:esp32@${{matrix.core_version}}
       
       - name: install lib lvgl@9.2.2
         run: |
           ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} lib install "lvgl@9.2.2"
       
-      - name: install lib DHT_sensor_library
+      - name: install lib Adafruit NeoPixel
+        run: |
+          ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} lib install "Adafruit NeoPixel@1.15.2"
+      
+      - name: install lib DHT sensor library
         run: |
           ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} lib install "DHT sensor library@1.4.6"
       
@@ -63,4 +70,4 @@ jobs:
       - name: compile
         run: |
           echo "Compiling ${GITHUB_WORKSPACE}/${{matrix.example}}"
-          ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} compile --fqbn esp32:esp32:esp32 "${GITHUB_WORKSPACE}/${{matrix.example}}" -j 0 --warnings all --board-options PartitionScheme=huge_app --build-property "build.extra_flags=-Wall -Werror" --log --clean -v
+          ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} compile --fqbn ${{matrix.fqbn}} "${GITHUB_WORKSPACE}/${{matrix.example}}" -j 0 --warnings all --board-options "FlashSize=16M" --board-options "PartitionScheme=custom" --board-options "PSRAM=opi" --build-property "build.extra_flags=-Wall -Wno-missing-field-initializers -Wno-type-limits -Wno-deprecated-copy -Wno-unused-variable -Wno-unused-function -Wno-sign-compare -Wno-reorder -DESP32 -DARDUINO_ARCH_ESP32" --log --clean -v
