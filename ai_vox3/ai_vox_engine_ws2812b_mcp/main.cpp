@@ -1,5 +1,5 @@
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
-#include <FastLED.h>
 #include <WiFi.h>
 #include <cJSON.h>
 #include <driver/i2c_master.h>
@@ -81,17 +81,17 @@ constexpr auto kDisplayRgbElementOrder = LCD_RGB_ELEMENT_ORDER_RGB;
 constexpr uint8_t kEs8311I2cAddress = 0x30;
 constexpr uint32_t kAudioSampleRate = 16000;
 
-constexpr uint8_t kWs2812bRgbLedNum = 12;  // Led nums
+constexpr uint8_t kWs2812bRgbLedNum = 12;  // Led nums  g_ws2812b_strip
 
-CRGB g_ws2812b_rgb_leds[kWs2812bRgbLedNum];
-
-uint8_t g_display_brightness = 255;
+Adafruit_NeoPixel g_ws2812b_strip(kWs2812bRgbLedNum, kWs2812bRgbPin, NEO_GRB + NEO_KHZ800);
 
 i2c_master_bus_handle_t g_i2c_master_bus_handle = nullptr;
 std::shared_ptr<ai_vox::AudioDeviceEs8311> g_audio_device_es8311;
 std::unique_ptr<Display> g_display;
 auto g_observer = std::make_shared<ai_vox::Observer>();
 button_handle_t g_button_boot_handle = nullptr;
+
+uint8_t g_display_brightness = 255;
 
 void InitI2cBus() {
   const i2c_master_bus_config_t i2c_master_bus_config = {
@@ -540,9 +540,9 @@ void InitMcpTools() {
 void InitWs2812bRgb() {
   printf("init ws2812b rgb module.\n");
 
-  FastLED.addLeds<NEOPIXEL, kWs2812bRgbPin>(g_ws2812b_rgb_leds, kWs2812bRgbLedNum);
-  FastLED.setBrightness(128);
-  FastLED.show();
+  g_ws2812b_strip.begin();
+  g_ws2812b_strip.setBrightness(100);
+  g_ws2812b_strip.show();
 }
 
 std::string GetLedRangeColorsJson(const uint8_t start_index, const uint8_t end_index) {
@@ -566,10 +566,12 @@ std::string GetLedRangeColorsJson(const uint8_t start_index, const uint8_t end_i
   for (uint8_t i = start_index; i <= end_index; i++) {
     auto color_status = cjson_util::MakeUnique();
 
+    const uint32_t color = g_ws2812b_strip.getPixelColor(i - 1);
+
     cJSON_AddNumberToObject(color_status.get(), "index", i);
-    cJSON_AddNumberToObject(color_status.get(), "red", g_ws2812b_rgb_leds[i - 1].r);
-    cJSON_AddNumberToObject(color_status.get(), "green", g_ws2812b_rgb_leds[i - 1].g);
-    cJSON_AddNumberToObject(color_status.get(), "blue", g_ws2812b_rgb_leds[i - 1].b);
+    cJSON_AddNumberToObject(color_status.get(), "red", (color >> 16) & 0xFF);
+    cJSON_AddNumberToObject(color_status.get(), "green", (color >> 8) & 0xFF);
+    cJSON_AddNumberToObject(color_status.get(), "blue", color & 0xFF);
 
     cJSON_AddItemToArray(colors_array.get(), color_status.release());
   }
@@ -790,8 +792,11 @@ void loop() {
                *red_ptr,
                *green_ptr,
                *blue_ptr);
-        g_ws2812b_rgb_leds[*index_ptr - 1] = CRGB(static_cast<uint8_t>(*red_ptr), static_cast<uint8_t>(*green_ptr), static_cast<uint8_t>(*blue_ptr));
-        FastLED.show();
+
+        g_ws2812b_strip.setPixelColor(
+            *index_ptr - 1, static_cast<uint8_t>(*red_ptr), static_cast<uint8_t>(*green_ptr), static_cast<uint8_t>(*blue_ptr));
+        g_ws2812b_strip.show();
+
         engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
 
       } else if ("self.ws2812b.set_range_colors" == mcp_tool_call_event->name) {
@@ -859,10 +864,11 @@ void loop() {
                *red_ptr,
                *green_ptr,
                *blue_ptr);
-        fill_solid(&g_ws2812b_rgb_leds[*start_index_ptr - 1],
-                   *end_index_ptr - *start_index_ptr + 1,
-                   CRGB(static_cast<uint8_t>(*red_ptr), static_cast<uint8_t>(*green_ptr), static_cast<uint8_t>(*blue_ptr)));
-        FastLED.show();
+
+        for (uint8_t i = *start_index_ptr - 1; i < *end_index_ptr; i++) {
+          g_ws2812b_strip.setPixelColor(i, static_cast<uint8_t>(*red_ptr), static_cast<uint8_t>(*green_ptr), static_cast<uint8_t>(*blue_ptr));
+        }
+        g_ws2812b_strip.show();
         engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
 
       } else if ("self.ws2812b.set_brightness" == mcp_tool_call_event->name) {
@@ -877,8 +883,8 @@ void loop() {
         }
 
         printf("on mcp tool call: self.ws2812b.set_brightness, brightness: %" PRId64 "\n", *brightness_ptr);
-        FastLED.setBrightness(static_cast<uint8_t>(*brightness_ptr));
-        FastLED.show();
+        g_ws2812b_strip.setBrightness(static_cast<uint8_t>(*brightness_ptr));
+        g_ws2812b_strip.show();
         engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
 
       } else if ("self.ws2812b.get_index_color" == mcp_tool_call_event->name) {
@@ -929,7 +935,7 @@ void loop() {
         engine.SendMcpCallResponse(mcp_tool_call_event->id, std::move(color_json));
 
       } else if ("self.ws2812b.get_brightness" == mcp_tool_call_event->name) {
-        const auto brightness = FastLED.getBrightness();
+        const auto brightness = g_ws2812b_strip.getBrightness();
         printf("on mcp tool call: self.ws2812b.get_brightness, brightness: %" PRIu8 "\n", brightness);
         engine.SendMcpCallResponse(mcp_tool_call_event->id, static_cast<int64_t>(brightness));
 
