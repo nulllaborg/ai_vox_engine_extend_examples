@@ -516,12 +516,6 @@ void loop() {
     PrintMemInfo();
   }
 #endif
-  static uint32_t last_event_process_time = 0;
-  while (millis() - last_event_process_time > 1000) {
-    const uint16_t temperature = analogRead(kPhotosensitivePin);
-    printf("Photosensitive value: %" PRIu16 "\n", temperature);
-    last_event_process_time = millis();
-  }
 
   auto& engine = ai_vox::Engine::GetInstance();
 
