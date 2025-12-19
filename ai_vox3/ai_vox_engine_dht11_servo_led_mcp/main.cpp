@@ -20,6 +20,7 @@
 #include "network_config_mode_mp3.h"
 #include "network_connected_mp3.h"
 #include "notification_0_mp3.h"
+#include "servo.h"
 
 #ifndef ARDUINO_ESP32S3_DEV
 #error "This example only supports ESP32S3-Dev board."
@@ -90,20 +91,17 @@ std::unique_ptr<Display> g_display;
 auto g_observer = std::make_shared<ai_vox::Observer>();
 button_handle_t g_button_boot_handle = nullptr;
 
-constexpr uint8_t kServoFrequency = 50;
-constexpr uint8_t kServoResolution = 12;
 constexpr uint32_t kMinPulse = 500;
 constexpr uint32_t kMaxPulse = 2500;
 constexpr uint16_t kMaxServoAngle = 180;
-
-constexpr uint32_t kMaxPwmDuty = pow(2, kServoResolution) - 1;
-constexpr uint32_t kPwmFactor = 1000 * 1000 / kServoFrequency;
 
 constexpr uint8_t kLcdBacklightChannel = 7;
 constexpr uint32_t kDisplayBacklightFrequency = 1000;
 constexpr uint8_t kDisplayBacklightResolution = 8;
 
 std::vector<uint16_t> g_servo_angles(kServoPins.size(), 90);
+
+std::vector<std::unique_ptr<em::Servo>> g_servos;
 
 uint8_t g_display_brightness = 255;
 
@@ -534,47 +532,22 @@ void InitMcpTools() {
   );
 }
 
-uint32_t CalculateDuty(const uint16_t angle) {
-  // Map the angle to the pulse width（500-2500μs）
-  const uint32_t pulse_width = map(angle, 0, kMaxServoAngle, kMinPulse, kMaxPulse);
-  return static_cast<uint32_t>((pulse_width * kMaxPwmDuty) / kPwmFactor);
-}
-
 void InitServos() {
   printf("init servos\n");
 
+  g_servos.clear();
   for (uint8_t i = 0; i < kServoPins.size(); i++) {
-    if (!ledcAttach(kServoPins[i], kServoFrequency, kServoResolution)) {
-      printf("Error: Failed to attach servo %" PRIu8 " on pin%" PRIu8 " .\n", i, kServoPins[i]);
+    auto servo = std::make_unique<em::Servo>(kServoPins[i], 0, kMaxServoAngle, kMinPulse, kMaxPulse);
+
+    if (!servo->Init()) {
+      printf("Error: Failed to init servo %" PRIu8 " on pin %" PRIu16 "\n", i, kServoPins[i]);
       continue;
     }
 
-    if (!ledcWrite(kServoPins[i], CalculateDuty(g_servo_angles[i]))) {
-      printf("Error: Failed to set initial duty for servo %" PRIu8 " .\n", i);
-      continue;
-    }
+    servo->Write(g_servo_angles[i]);
+
+    g_servos.push_back(std::move(servo));
   }
-}
-
-bool SetServoAngle(const uint8_t servo_index, const uint16_t angle) {
-  if (servo_index < 1 || servo_index > kServoPins.size()) {
-    printf("Error: Invalid servo index: %" PRIu8 ", valid range: 1-%" PRIu8 " .\n", servo_index, kServoPins.size());
-    return false;
-  }
-
-  if (angle > kMaxServoAngle) {
-    printf("Error: Invalid servo angle: %" PRIu16 " for index: %" PRIu8 " .\n", angle, servo_index);
-    return false;
-  }
-
-  if (!ledcWrite(kServoPins[servo_index - 1], CalculateDuty(angle))) {
-    printf("Error: Failed to write duty for servo %" PRIu8 " .\n", servo_index);
-    return false;
-  }
-
-  g_servo_angles[servo_index - 1] = angle;
-
-  return true;
 }
 
 }  // namespace
@@ -771,11 +744,10 @@ void loop() {
         }
 
         printf("on mcp tool call: self.servo.set_one_servo, index: %" PRId64 ", angle: %" PRId64 "\n", *index_ptr, *angle_ptr);
-        if (SetServoAngle(static_cast<uint8_t>(*index_ptr), static_cast<uint16_t>(*angle_ptr))) {
-          engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
-        } else {
-          engine.SendMcpCallError(mcp_tool_call_event->id, "Failed to set servo angle for index: " + std::to_string(*index_ptr));
-        }
+        g_servos[*index_ptr - 1]->Write(static_cast<uint16_t>(*angle_ptr));
+        g_servo_angles[*index_ptr - 1] = *angle_ptr;
+
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
 
       } else if ("self.servo.set_range_servos" == mcp_tool_call_event->name) {
         const auto start_index_ptr = mcp_tool_call_event->param<int64_t>("start_index");
@@ -820,16 +792,11 @@ void loop() {
                *end_index_ptr,
                *angle_ptr);
 
-        uint8_t index = 0;
-        for (index = *start_index_ptr; index <= *end_index_ptr; index++) {
-          if (!SetServoAngle(index, static_cast<uint16_t>(*angle_ptr))) {
-            engine.SendMcpCallError(mcp_tool_call_event->id, "Failed to set servo angle for index: " + std::to_string(index));
-            break;
-          }
+        for (uint8_t index = *start_index_ptr - 1; index < *end_index_ptr; index++) {
+          g_servos[index]->Write(static_cast<uint16_t>(*angle_ptr));
+          g_servo_angles[index - 1] = *angle_ptr;
         }
-        if (index > *end_index_ptr) {
-          engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
-        }
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
 
       } else if ("self.servo.get_index_servo_angle" == mcp_tool_call_event->name) {
         const auto index_ptr = mcp_tool_call_event->param<int64_t>("index");

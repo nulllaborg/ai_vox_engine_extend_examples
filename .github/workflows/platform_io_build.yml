@@ -14,10 +14,6 @@ jobs:
         target: [
           "esp32_display_lcd",
           "esp32_display_oled",
-          "ai_vox_board_led",
-          "ai_vox_board_motordriver",
-          "ai_vox_board_servo",
-          "ai_vox_board_ws2812b",
           "ai_vox3_dht11_servo_led",
           "ai_vox3_led",
           "ai_vox3_motor_fan",

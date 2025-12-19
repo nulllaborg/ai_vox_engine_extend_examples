@@ -19,6 +19,7 @@
 #include "network_config_mode_mp3.h"
 #include "network_connected_mp3.h"
 #include "notification_0_mp3.h"
+#include "servo.h"
 
 #ifndef ARDUINO_ESP32S3_DEV
 #error "This example only supports ESP32S3-Dev board."
@@ -87,17 +88,11 @@ std::unique_ptr<Display> g_display;
 auto g_observer = std::make_shared<ai_vox::Observer>();
 button_handle_t g_button_boot_handle = nullptr;
 
-constexpr uint8_t kServoChannel = 4;
-constexpr uint8_t kServoFrequency = 50;
-constexpr uint8_t kServoResolution = 12;
 constexpr uint32_t kMinPulse = 500;
 constexpr uint32_t kMaxPulse = 2500;
 constexpr uint16_t kMaxServoAngle = 180;
 
-constexpr uint32_t kMaxPwmDuty = pow(2, kServoResolution) - 1;
-constexpr uint32_t kPwmFactor = 1000 * 1000 / kServoFrequency;
-
-constexpr uint8_t kLcdBacklightChannel = 1;
+constexpr uint8_t kLcdBacklightChannel = 5;
 constexpr uint8_t kMotorInAChannel = 6;
 constexpr uint8_t kMotorInBChannel = 7;
 constexpr uint32_t kCommonPwmFrequency = 1000;
@@ -115,6 +110,8 @@ uint16_t g_swing_max_angle = 180;
 bool g_swing_forward = true;
 
 uint8_t g_display_brightness = 255;
+
+std::unique_ptr<em::Servo> g_servo;
 
 void InitI2cBus() {
   const i2c_master_bus_config_t i2c_master_bus_config = {
@@ -501,12 +498,6 @@ void InitMcpTools() {
   );
 }
 
-uint32_t CalculateDuty(const uint16_t angle) {
-  // Map the angle to the pulse width（500-2500μs）
-  const uint32_t pulse_width = map(angle, 0, kMaxServoAngle, kMinPulse, kMaxPulse);
-  return static_cast<uint32_t>((pulse_width * kMaxPwmDuty) / kPwmFactor);
-}
-
 bool SetFanSpeed(const uint8_t speed, const bool forward) {
   if (speed < 0 || speed > 255) {
     printf("Error: invalid motor fan speed: %" PRIu8 ", valid range: 0-255\n", speed);
@@ -561,14 +552,14 @@ void InitMotor() {
 void InitServo() {
   printf("init servo\n");
 
-  if (!ledcAttachChannel(kServoPin, kServoFrequency, kServoResolution, kServoChannel)) {
-    printf("Error: Failed to attach servo LEDC channel.\n");
+  g_servo = std::make_unique<em::Servo>(kServoPin, 0, kMaxServoAngle, kMinPulse, kMaxPulse);
+
+  if (!g_servo->Init()) {
+    printf("Error: Failed to init servo.\n");
     return;
   }
 
-  if (!ledcWriteChannel(kServoChannel, CalculateDuty(g_servo_angle))) {
-    printf("Error: Failed to set initial servo duty.\n");
-  }
+  g_servo->Write(g_servo_angle);
 }
 
 }  // namespace
@@ -654,12 +645,8 @@ void loop() {
 
       const uint16_t next_servo_angle = g_swing_forward ? g_servo_angle + 1 : g_servo_angle - 1;
 
-      if (!ledcWriteChannel(kServoChannel, CalculateDuty(next_servo_angle))) {
-        printf("Error: Failed to update servo angle in swing loop.\n");
-      } else {
-        g_servo_angle = next_servo_angle;
-      }
-
+      g_servo->Write(next_servo_angle);
+      g_servo_angle = next_servo_angle;
       g_last_swing_time = millis();
     }
   }
@@ -817,12 +804,9 @@ void loop() {
         }
 
         printf("on mcp tool call: self.motor_fan.set_angle, angle: %" PRId64 "\n", *angle_ptr);
-        if (ledcWriteChannel(kServoChannel, CalculateDuty(static_cast<uint16_t>(*angle_ptr)))) {
-          g_servo_angle = static_cast<uint16_t>(*angle_ptr);
-          engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
-        } else {
-          engine.SendMcpCallResponse(mcp_tool_call_event->id, "Failed to set servo angle");
-        }
+        g_servo->Write(static_cast<uint16_t>(*angle_ptr));
+        g_servo_angle = static_cast<uint16_t>(*angle_ptr);
+        engine.SendMcpCallResponse(mcp_tool_call_event->id, true);
 
       } else if ("self.motor_fan.set_swing_range" == mcp_tool_call_event->name) {
         const auto swing_min_angle_ptr = mcp_tool_call_event->param<int64_t>("swing_min_angle");
