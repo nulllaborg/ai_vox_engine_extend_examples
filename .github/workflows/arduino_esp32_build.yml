@@ -14,7 +14,7 @@ jobs:
       ARDUINO_CLI_DIR: ${{github.workspace}}/arduino_cli
       ARDUINO_CLI_CONFIG_DIR: ${{github.workspace}}/arduino_cli_config
       ARDUINO_USER_DIR: ${{github.workspace}}/arduino_user
-      AI_VOX_VERSION: "v1.3.0"
+      AI_VOX_VERSION: "v1.3.1"
     strategy:
       matrix:
         example: ["esp32/ai_vox_engine_us04_dht11_photosensitive_display_lcd_mcp", "esp32/ai_vox_engine_us04_dht11_photosensitive_display_oled_mcp"]
@@ -50,7 +50,7 @@ jobs:
         run: |
           ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} lib install "DHT sensor library@1.4.6"
       
-      - name: Install AI_VOX Library from GitHub (v1.3.0)
+      - name: Install AI_VOX Library from GitHub (v1.3.1)
         run: |
           echo "Installing AI_VOX library version ${AI_VOX_VERSION}"
           ${ARDUINO_CLI_DIR}/arduino-cli --config-dir ${ARDUINO_CLI_CONFIG_DIR} lib install --git-url https://github.com/nulllaborg/ai_vox.git#${AI_VOX_VERSION}
