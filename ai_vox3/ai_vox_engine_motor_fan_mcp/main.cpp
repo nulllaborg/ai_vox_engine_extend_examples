@@ -65,8 +65,8 @@ constexpr gpio_num_t kI2cSda = GPIO_NUM_13;  // ES8311 CDATA
 
 constexpr gpio_num_t kServoPin = GPIO_NUM_42;  // Servo
 
-constexpr gpio_num_t kMotorInA = GPIO_NUM_3;  // Motor INA
-constexpr gpio_num_t kMotorInB = GPIO_NUM_4;  // Motor INB
+constexpr gpio_num_t kMotorInA = GPIO_NUM_4;  // Motor INA
+constexpr gpio_num_t kMotorInB = GPIO_NUM_3;  // Motor INB
 
 constexpr i2c_port_t kI2CPort = I2C_NUM_1;
 
